@@ -52,7 +52,11 @@ class SMD_OT_Compile(bpy.types.Operator, Logger):
 
 	def execute(self,context):
 		multi_files = len([file for file in self.properties.files if file.name]) > 0
-		if not multi_files and not (self.properties.filepath == "*" or os.path.isfile(self.properties.filepath)):
+		if (
+			not multi_files
+			and self.properties.filepath != "*"
+			and not os.path.isfile(self.properties.filepath)
+		):
 			self.report({'ERROR'},"No QC files selected for compile.")
 			return {'CANCELLED'}
 
@@ -67,15 +71,11 @@ class SMD_OT_Compile(bpy.types.Operator, Logger):
 	def getQCs(cls, path : str = None) -> list:
 		import glob
 		ext = ".qc"
-		out = []
 		internal = False
 		if not path:
 			path = bpy.path.abspath(bpy.context.scene.vs.qc_path)
 			internal = True
-		for result in glob.glob(path):
-			if result.endswith(ext):
-				out.append(result)
-
+		out = [result for result in glob.glob(path) if result.endswith(ext)]
 		if not internal and not len(out) and not path.endswith(ext):
 			out = cls.getQCs(path + ext)
 		return out
@@ -86,14 +86,16 @@ class SMD_OT_Compile(bpy.types.Operator, Logger):
 
 		studiomdl_path = os.path.join(bpy.path.abspath(scene.vs.engine_path),"studiomdl.exe")
 
-		if path == "*":
+		if (
+			path == "*"
+			or not isinstance(path, str)
+			and not hasattr(path, "__getitem__")
+		):
 			paths = SMD_OT_Compile.getQCs()
-		elif isinstance(path,str):
+		elif isinstance(path, str):
 			paths = [os.path.realpath(bpy.path.abspath(path))]
-		elif hasattr(path,"__getitem__"):
-			paths = path
 		else:
-			paths = SMD_OT_Compile.getQCs()
+			paths = path
 		num_good_compiles = 0
 		num_qcs = len(paths)
 		if num_qcs == 0:
@@ -101,8 +103,7 @@ class SMD_OT_Compile(bpy.types.Operator, Logger):
 		elif not os.path.exists(studiomdl_path):
 			self.error(get_id("qc_compile_err_compiler", True).format(studiomdl_path) )
 		else:
-			i = 0
-			for qc in paths:
+			for i, qc in enumerate(paths):
 				bpy.context.window_manager.progress_update((i+1) / (num_qcs+1))
 				# save any version of the file currently open in Blender
 				qc_mangled = qc.lower().replace('\\','/')
@@ -114,8 +115,8 @@ class SMD_OT_Compile(bpy.types.Operator, Logger):
 						ops.text.save()
 						bpy.context.area.type = oldType
 						break #what a farce!
-				
-				print( "Running studiomdl for \"{}\"...\n".format(os.path.basename(qc)) )
+
+				print(f'Running studiomdl for \"{os.path.basename(qc)}\"...\n')
 				studiomdl = subprocess.Popen([studiomdl_path, "-nop4", "-game", State.gamePath, qc])
 				studiomdl.communicate()
 
@@ -123,7 +124,6 @@ class SMD_OT_Compile(bpy.types.Operator, Logger):
 					num_good_compiles += 1
 				else:
 					self.error(get_id("qc_compile_err_unknown", True).format(os.path.basename(qc)))
-				i+=1
 		return num_good_compiles
 
 class SmdExporter(bpy.types.Operator, Logger):
@@ -145,12 +145,15 @@ class SmdExporter(bpy.types.Operator, Logger):
 
 	def execute(self, context):
 		#bpy.context.window_manager.progress_begin(0,1)
-		
+
 		# Misconfiguration?
 		if State.datamodelEncoding != 0 and context.scene.vs.export_format == 'DMX':
 			datamodel.check_support("binary",State.datamodelEncoding)
 			if State.datamodelEncoding < 3 and State.datamodelFormat > 11 and not context.scene.vs.use_kv2:
-				self.report({'ERROR'},"DMX format \"Model {}\" requires DMX encoding \"Binary 3\" or later".format(State.datamodelFormat))
+				self.report(
+					{'ERROR'},
+					f'DMX format \"Model {State.datamodelFormat}\" requires DMX encoding \"Binary 3\" or later',
+				)
 				return {'CANCELLED' }
 		if not context.scene.vs.export_path:
 			bpy.ops.wm.call_menu(name="SMD_MT_ConfigureScene")
@@ -161,7 +164,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 		if State.datamodelEncoding == 0 and context.scene.vs.export_format == 'DMX':
 			self.report({'ERROR'},get_id("exporter_err_dmxother"))
 			return {'CANCELLED'}
-		
+
 		# Don't create an undo level from edit mode
 		prev_mode = prev_hidden = None
 		if context.active_object:
@@ -175,17 +178,17 @@ class SmdExporter(bpy.types.Operator, Logger):
 				prev_mode.reverse()
 				prev_mode = "_".join(prev_mode)
 			ops.object.mode_set(mode='OBJECT')
-		
+
 		State.update_scene()
 		self.bake_results = []
 		self.bone_ids = {}
 		self.materials_used = set()
-		
+
 		for ob in [ob for ob in bpy.context.scene.objects if ob.type == 'ARMATURE' and len(ob.vs.subdir) == 0]:
 			ob.vs.subdir = "anims"
-		
+
 		ops.ed.undo_push(message=self.bl_label)
-				
+
 		try:
 			context.tool_settings.use_keyframe_insert_auto = False
 			context.tool_settings.use_keyframe_insert_keyingset = False
@@ -193,32 +196,33 @@ class SmdExporter(bpy.types.Operator, Logger):
 			State.unhook_events()
 			if context.scene.rigidbody_world:
 				context.scene.frame_set(context.scene.rigidbody_world.point_cache.frame_start)
-			
+
 			# lots of operators only work on visible objects
 			for ob in context.scene.objects:
 				ob.hide_viewport = False
 			# ensure that objects in all collections are accessible to operators
 			context.view_layer.layer_collection.exclude = False
-			
+
 			self.files_exported = self.attemptedExports = 0
-			
+
 			if self.export_scene:
 				for id in [exportable.item for exportable in context.scene.vs.export_list]:
-					if type(id) == Collection:
-						if shouldExportGroup(id):
-							self.exportId(context, id)
-					elif id.vs.export:
+					if (
+						type(id) == Collection
+						and shouldExportGroup(id)
+						or type(id) != Collection
+						and id.vs.export
+					):
 						self.exportId(context, id)
+			elif self.collection == "":
+				for exportable in getSelectedExportables():
+					self.exportId(context, exportable.item)
 			else:
-				if self.collection == "":
-					for exportable in getSelectedExportables():
-						self.exportId(context, exportable.item)
-				else:
-					collection = bpy.data.collections[self.collection]
-					if collection.vs.mute: self.error(get_id("exporter_err_groupmuted", True).format(collection.name))
-					elif not collection.objects: self.error(get_id("exporter_err_groupempty", True).format(collection.name))
-					else: self.exportId(context, collection)
-			
+				collection = bpy.data.collections[self.collection]
+				if collection.vs.mute: self.error(get_id("exporter_err_groupmuted", True).format(collection.name))
+				elif not collection.objects: self.error(get_id("exporter_err_groupempty", True).format(collection.name))
+				else: self.exportId(context, collection)
+
 			num_good_compiles = None
 
 			if self.attemptedExports == 0:
@@ -230,8 +234,13 @@ class SmdExporter(bpy.types.Operator, Logger):
 				else:
 					num_good_compiles = SMD_OT_Compile.compileQCs(self) # hack, use self as the logger
 					print("\n")
-			
-			if num_good_compiles != None:
+
+			if num_good_compiles is None:
+				self.errorReport(get_id("exporter_report", True).format(
+					self.files_exported,
+					self.elapsed_time()
+					))
+			else:
 				self.errorReport(get_id("exporter_report_qc", True).format(
 						self.files_exported,
 						self.elapsed_time(),
@@ -239,22 +248,17 @@ class SmdExporter(bpy.types.Operator, Logger):
 						State.engineBranchTitle,
 						os.path.basename(State.gamePath)
 						))
-			else:
-				self.errorReport(get_id("exporter_report", True).format(
-					self.files_exported,
-					self.elapsed_time()
-					))
 		finally:
 			# Clean everything up
 			ops.ed.undo_push(message=self.bl_label)
 			if bpy.app.debug_value <= 1: ops.ed.undo()
-			
+
 			if prev_mode:
 				ops.object.mode_set(mode=prev_mode)
 			if prev_hidden:
 				context.scene.objects[prev_hidden].hide_viewport = True
 			context.scene.update_tag()
-			
+
 			context.window_manager.progress_end()
 			State.hook_events()
 
@@ -274,13 +278,13 @@ class SmdExporter(bpy.types.Operator, Logger):
 		self.attemptedExports += 1
 		self.armature = self.armature_src = None
 		bench = BenchMarker()
-		
+
 		subdir = id.vs.subdir
-		
+
 		print( "\nBlender Source Tools: exporting {}".format(id.name) )
-				
+
 		subdir = subdir.lstrip("/") # don't want //s here!
-		
+
 		path = os.path.join(bpy.path.abspath(context.scene.vs.export_path), subdir)
 		if not os.path.exists(path):
 			try:
@@ -292,7 +296,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 		if isinstance(id, bpy.types.Collection) and not any(ob.vs.export for ob in id.objects):
 			self.error(get_id("exporter_err_nogroupitems",True).format(id.name))
 			return
-		
+
 		if isinstance(id, bpy.types.Object) and id.type == 'ARMATURE':
 			ad = id.animation_data
 			if not ad: return # otherwise we create a folder but put nothing in it
@@ -306,9 +310,9 @@ class SmdExporter(bpy.types.Operator, Logger):
 				self.error(get_id("exporter_err_arm_noanims",True).format(id.name))
 		else:
 			export_name = id.name		
-			
+
 		# hide all metaballs that we don't want
-		for meta in [ob for ob in context.scene.objects if ob.type == 'META' and (not ob.vs.export or (isinstance(id, Collection) and not ob.name in id.objects))]:
+		for meta in [ob for ob in context.scene.objects if ob.type == 'META' and (not ob.vs.export or isinstance(id, Collection) and ob.name not in id.objects)]:
 			for element in meta.data.elements: element.hide = True
 
 		def find_basis_metaball(id):
@@ -332,26 +336,26 @@ class SmdExporter(bpy.types.Operator, Logger):
 				except ValueError:
 					pass
 			return basis
-		
+
 		bake_results = []
 		baked_metaballs = []
-		
+
 		bench.report("setup")
-		
+
 		if bench.quiet: print("- Baking...")
 
 		if type(id) == Collection:
 			group_vertex_maps = valvesource_vertex_maps(id)
-			for i, ob in enumerate([ob for ob in id.objects if ob.vs.export and ob.name in State.exportableObjects]):
+			for i, ob in enumerate(ob for ob in id.objects if ob.vs.export and ob.name in State.exportableObjects):
 				bpy.context.window_manager.progress_update(i / len(id.objects))
 				if ob.type == 'META':
 					ob = find_basis_metaball(ob)
 					if ob in baked_metaballs: continue
 					else: baked_metaballs.append(ob)
-						
+
 				bake = self.bakeObj(ob)
 				for vertex_map_name in group_vertex_maps:
-					if not vertex_map_name in bake.object.data.vertex_colors:
+					if vertex_map_name not in bake.object.data.vertex_colors:
 						vertex_map = bake.object.data.vertex_colors.new(vertex_map_name)
 						vertex_map.data.foreach_set("color",[1.0] * 4)
 
@@ -371,7 +375,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 
 		if not any(bake_results):
 			return
-		
+
 		if State.exportFormat == ExportFormat.DMX and hasShapes(id):
 			self.flex_controller_mode = id.vs.flex_controller_mode
 			self.flex_controller_source = id.vs.flex_controller_source
@@ -379,7 +383,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 		bpy.context.view_layer.objects.active = bake_results[0].object
 		bpy.ops.object.mode_set(mode='OBJECT')
 		mesh_bakes = [bake for bake in bake_results if bake.object.type == 'MESH']
-		
+
 		skip_vca = False
 		if isinstance(id, Collection) and len(id.vs.vertex_animations) and len(id.objects) > 1:
 			if len(mesh_bakes) > len([bake for bake in bake_results if (type(bake.envelope) is str and bake.envelope == bake_results[0].envelope) or bake.envelope is None]):
@@ -400,7 +404,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 			two_percent = vca.num_frames * len(bake_results) / 50
 			print("- Generating vertex animation \"{}\"".format(va.name))
 			anim_bench = BenchMarker(1,va.name)
-			
+
 			for f in range(va.start,va.end):
 				bpy.context.scene.frame_set(f)
 				bpy.ops.object.select_all(action='DESELECT')
@@ -415,29 +419,29 @@ class SmdExporter(bpy.types.Operator, Logger):
 					top_parent = self.getTopParent(bake.src)
 					if top_parent:
 						bake.fob.location -= top_parent.location
-					
+
 					if context.scene.rigidbody_world:
 						# Blender 2.71 bug: https://developer.blender.org/T41388
 						prev_rbw = bpy.context.scene.rigidbody_world.enabled
 						bpy.context.scene.rigidbody_world.enabled = False
 
 					bpy.ops.object.transform_apply(location=True,scale=True,rotation=True)
-				
+
 					if context.scene.rigidbody_world:
 						bpy.context.scene.rigidbody_world.enabled = prev_rbw
 
 				if bpy.context.selected_objects and State.exportFormat == ExportFormat.SMD:
 					bpy.context.view_layer.objects.active = bpy.context.selected_objects[0]
 					ops.object.join()
-				
+
 				vca.append(bpy.context.active_object if len(bpy.context.selected_objects) == 1 else bpy.context.selected_objects)
 				anim_bench.report("bake")
-				
+
 				if len(bpy.context.selected_objects) != 1:
 					for bake in mesh_bakes:
 						bpy.context.scene.collection.objects.unlink(bake.fob)
 						del bake.fob
-				
+
 				anim_bench.report("record")
 
 				if two_percent and len(vca) / len(bake_results) % two_percent == 0:
@@ -453,13 +457,13 @@ class SmdExporter(bpy.types.Operator, Logger):
 			view_obs = bpy.context.view_layer.objects
 			for bake in [bake for bake in bake_results if type(bake.envelope) is str or bake.envelope is None]:
 				bone_parents[bake.envelope].append(bake)
-				
+
 			for bp, parts in bone_parents.items():
 				if len(parts) <= 1: continue
 				shape_names = set()
 				for key in [key for part in parts for key in part.shapes.keys()]:
 					shape_names.add(key)
-					
+
 				ops.object.select_all(action='DESELECT')
 				for part in parts:
 					ob = part.object.copy()
@@ -469,9 +473,9 @@ class SmdExporter(bpy.types.Operator, Logger):
 					ob.select_set(True)
 					view_obs.active = ob
 					bake_results.remove(part)
-					
+
 				bpy.ops.object.join()
-				joined = self.BakeResult(bp + "_meshes" if bp else "loose_meshes")
+				joined = self.BakeResult(f"{bp}_meshes" if bp else "loose_meshes")
 				joined.object = bpy.context.active_object
 				joined.object.name = joined.object.data.name = joined.name
 				joined.envelope = bp
@@ -495,12 +499,12 @@ class SmdExporter(bpy.types.Operator, Logger):
 							bpy.ops.object.transform_apply(location=True,scale=True,rotation=True)
 							vca.append(bpy.context.active_object)
 							scene_obs.unlink(bpy.context.active_object)
-				
+
 				bake_results.append(joined)
-					
+
 				for shape_name in shape_names:
 					ops.object.select_all(action='DESELECT')
-						
+
 					for part in parts:
 						mesh = part.shapes[shape_name] if shape_name in part.shapes else part.object.data
 						ob = bpy.data.objects.new(name="{} -> {}".format(part.name,shape_name),object_data = mesh.copy())
@@ -508,15 +512,15 @@ class SmdExporter(bpy.types.Operator, Logger):
 						ob.matrix_local = part.matrix
 						ob.select_set(True)
 						view_obs.active = ob
-						
+
 					bpy.ops.object.join()
 					joined.shapes[shape_name] = bpy.context.active_object.data
 					bpy.context.active_object.data.name = "{} -> {}".format(joined.object.name,shape_name)
-						
+
 					scene_obs.unlink(ob)
 					bpy.data.objects.remove(ob)
 					del ob
-						
+
 				view_obs.active = joined.object
 			bench.report("Mech merge")
 
@@ -534,7 +538,11 @@ class SmdExporter(bpy.types.Operator, Logger):
 			if not self.armature:
 				self.armature = self.bakeObj(self.armature_src).object
 			exporting_armature = isinstance(id, bpy.types.Object) and id.type == 'ARMATURE'
-			self.exportable_bones = list([self.armature.pose.bones[edit_bone.name] for edit_bone in self.armature.data.bones if (exporting_armature or edit_bone.use_deform)])
+			self.exportable_bones = [
+				self.armature.pose.bones[edit_bone.name]
+				for edit_bone in self.armature.data.bones
+				if (exporting_armature or edit_bone.use_deform)
+			]
 			skipped_bones = len(self.armature.pose.bones) - len(self.exportable_bones)
 			if skipped_bones:
 				print("- Skipping {} non-deforming bones".format(skipped_bones))
@@ -550,7 +558,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 		else:
 			self.files_exported += write_func(id, bake_results, self.sanitiseFilename(export_name), path)
 			bench.report(write_func.__name__)
-		
+
 		# Source doesn't handle Unicode characters in models. Detect any unicode strings and warn the user about them.
 		unicode_tested = set()
 		def test_for_unicode(name, id, display_type):
@@ -583,14 +591,16 @@ class SmdExporter(bpy.types.Operator, Logger):
 		amod = bake_result.envelope
 		ob = bake_result.object
 		if not amod or not isinstance(amod, bpy.types.ArmatureModifier): return out
-		
+
 		amod_vg = ob.vertex_groups.get(amod.vertex_group)
 
 		try:
 			amod_ob = next((bake.object for bake in self.bake_results if bake.src == amod.object))
 		except StopIteration as e:
-			raise ValueError("Armature for exportable \"{}\" was not baked".format(bake_result.name)) from e
-		
+			raise ValueError(
+				f'Armature for exportable \"{bake_result.name}\" was not baked'
+			) from e
+
 		model_mat = amod_ob.matrix_world.inverted() @ ob.matrix_world
 
 		num_verts = len(ob.data.vertices)
@@ -598,40 +608,43 @@ class SmdExporter(bpy.types.Operator, Logger):
 			weights = []
 			total_weight = 0
 			if len(out) % 50 == 0: bpy.context.window_manager.progress_update(len(out) / num_verts)
-			
+
 			if amod.use_vertex_groups:
 				for v_group in v.groups:
-					if v_group.group < len(ob.vertex_groups):
-						ob_group = ob.vertex_groups[v_group.group]
-						group_name = ob_group.name
-						group_weight = v_group.weight					
-					else:
+					if v_group.group >= len(ob.vertex_groups):
 						continue # Vertex group might not exist on object if it's re-using a datablock				
 
+					ob_group = ob.vertex_groups[v_group.group]
+					group_name = ob_group.name
+					group_weight = v_group.weight
 					bone = amod_ob.pose.bones.get(group_name)
 					if bone and bone in self.exportable_bones:
 						weights.append([ self.bone_ids[bone.name], group_weight ])
 						total_weight += group_weight			
-					
+
 			if amod.use_bone_envelopes and total_weight == 0: # vertex groups completely override envelopes
 				for pose_bone in [pb for pb in amod_ob.pose.bones if pb in self.exportable_bones]:
-					weight = pose_bone.bone.envelope_weight * pose_bone.evaluate_envelope( model_mat @ v.co )
-					if weight:
+					if weight := pose_bone.bone.envelope_weight * pose_bone.evaluate_envelope(
+						model_mat @ v.co
+					):
 						weights.append([ self.bone_ids[pose_bone.name], weight ])
 						total_weight += weight
-				
+
 			# normalise weights, like Blender does. Otherwise Studiomdl puts anything left over onto the root bone.
 			if total_weight not in [0,1]:
 				for link in weights:
 					link[1] *= 1/total_weight
-			
+
 			# apply armature modifier vertex group
 			if amod_vg and total_weight > 0:
-				amod_vg_weight = 0
-				for v_group in v.groups:
-					if v_group.group == amod_vg.index:
-						amod_vg_weight = v_group.weight
-						break
+				amod_vg_weight = next(
+					(
+						v_group.weight
+						for v_group in v.groups
+						if v_group.group == amod_vg.index
+					),
+					0,
+				)
 				if amod.invert_vertex_group:
 					amod_vg_weight = 1 - amod_vg_weight
 				for link in weights:

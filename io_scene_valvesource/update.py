@@ -43,16 +43,16 @@ class SmdToolsUpdate(bpy.types.Operator):
 
 	def execute(self,_):
 		print("Source Tools update...")
-		
+
 		import sys
 		cur_version = sys.modules.get(__name__.split(".")[0]).bl_info['version']		
 
-		try:			
+		try:		
 			data = urllib.request.urlopen("http://steamreview.org/BlenderSourceTools/latest.php").read().decode('ASCII').split("\n")
 			remote_ver = data[0].strip().split(".")
 			remote_bpy = data[1].strip().split(".")
-			download_url = "http://steamreview.org/BlenderSourceTools/" + data[2].strip()
-			
+			download_url = f"http://steamreview.org/BlenderSourceTools/{data[2].strip()}"
+
 			for i in range(min( len(remote_bpy), len(bpy.app.version) )):
 				remote_component = int(remote_bpy[i])
 				local_component = bpy.app.version[i]
@@ -61,27 +61,29 @@ class SmdToolsUpdate(bpy.types.Operator):
 					return {'FINISHED'}
 				elif remote_component < local_component:
 					break # major version incremented
-					
+
 			for i in range(min( len(remote_ver), len(cur_version) )):
 				try:
 					diff = int(remote_ver[i]) - int(cur_version[i])
 				except ValueError:
 					continue
 				if diff > 0:
-					print("Found new version {}, downloading from {}...".format(PrintVer(remote_ver), download_url))
-					
+					print(
+						f"Found new version {PrintVer(remote_ver)}, downloading from {download_url}..."
+					)
+
 					zip = zipfile.ZipFile( io.BytesIO(urllib.request.urlopen(download_url).read()))
 					zip.extractall(path=os.path.join(os.path.dirname( os.path.abspath( __file__ ) ),".."))
-					
+
 					self.report({'INFO'},get_id("update_done", True).format(PrintVer(remote_ver)))
 					bpy.ops.wm.call_menu(name="SMD_MT_Updated")
 					return {'FINISHED'}
 				elif diff < 0:
 					break
-			
+
 			self.report({'INFO'},get_id("update_alreadylatest", True).format( PrintVer(cur_version) ))
 			return {'FINISHED'}
-			
+
 		except urllib.error.URLError as err:
 			self.report({'ERROR'}," ".join([get_id("update_err_downloadfailed") + str(err)]))
 			return {'CANCELLED'}

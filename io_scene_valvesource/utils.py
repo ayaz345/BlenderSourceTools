@@ -112,11 +112,11 @@ dmx_versions_source2 = {
 }
 
 class _StateMeta(type): # class properties are not supported below Python 3.9, so we use a metaclass instead
-	def __init__(cls, *args, **kwargs):
-		cls._exportableObjects = set()
-		cls.last_export_refresh = 0
-		cls._engineBranch = None
-		cls._gamePathValid = False
+	def __init__(self, *args, **kwargs):
+		self._exportableObjects = set()
+		self.last_export_refresh = 0
+		self._engineBranch = None
+		self._gamePathValid = False
 
 	@property
 	def exportableObjects(cls): return cls._exportableObjects
@@ -154,7 +154,14 @@ class State(metaclass=_StateMeta):
 	@classmethod
 	def update_scene(cls, scene = None):
 		scene = scene or bpy.context.scene
-		cls._exportableObjects = set([ob.name for ob in scene.objects if ob.type in exportable_types and not (ob.type == 'CURVE' and ob.data.bevel_depth == 0 and ob.data.extrude == 0)])
+		cls._exportableObjects = {
+			ob.name
+			for ob in scene.objects
+			if ob.type in exportable_types
+			and (
+				ob.type != 'CURVE' or ob.data.bevel_depth != 0 or ob.data.extrude != 0
+			)
+		}
 		make_export_list(scene)
 		cls.last_export_refresh = time.time()
 	
@@ -175,7 +182,7 @@ class State(metaclass=_StateMeta):
 
 	@classmethod
 	def hook_events(cls):
-		if not cls.update_scene in depsgraph_update_post:
+		if cls.update_scene not in depsgraph_update_post:
 			depsgraph_update_post.append(cls._onDepsgraphUpdate)
 			load_post.append(cls._onLoad)
 
@@ -225,8 +232,8 @@ def get_id(str_id, format_string = False, data = False):
 
 def get_active_exportable(context = None):
 	if not context: context = bpy.context
-	
-	if not context.scene.vs.export_list_active < len(context.scene.vs.export_list):
+
+	if context.scene.vs.export_list_active >= len(context.scene.vs.export_list):
 		return None
 
 	return context.scene.vs.export_list[context.scene.vs.export_list_active]
@@ -234,7 +241,7 @@ def get_active_exportable(context = None):
 class BenchMarker:
 	def __init__(self,indent = 0, prefix = None):
 		self._indent = indent * 4
-		self._prefix = "{}{}".format(" " * self._indent,prefix if prefix else "")
+		self._prefix = f'{" " * self._indent}{prefix if prefix else ""}'
 		self.quiet = bpy.app.debug_value <= 0
 		self.reset()
 
@@ -247,7 +254,7 @@ class BenchMarker:
 		if threshold and elapsed < threshold: return
 
 		if not self.quiet:
-			prefix = "{} {}:".format(self._prefix, label if label else "")
+			prefix = f'{self._prefix} {label if label else ""}:'
 			pad = max(0, 10 - len(prefix) + self._indent)
 			print("{}{}{:.4f}".format(prefix," " * pad, now - self._last))
 		self._last = now
@@ -259,7 +266,7 @@ class BenchMarker:
 
 def smdBreak(line):
 	line = line.rstrip('\n')
-	return line == "end" or line == ""
+	return line in ["end", ""]
 	
 def smdContinue(line):
 	return line.startswith("//")
@@ -272,7 +279,9 @@ def getEngineBranch() -> dmx_version:
 	path = os.path.abspath(bpy.path.abspath(bpy.context.scene.vs.engine_path))
 
 	# Source 2: search for executable name
-	engine_path_files = set(name[:-4] if name.endswith(".exe") else name for name in os.listdir(path))
+	engine_path_files = {
+		name[:-4] if name.endswith(".exe") else name for name in os.listdir(path)
+	}
 	if "resourcecompiler" in engine_path_files: # Source 2
 		for executable,dmx_version in dmx_versions_source2.items():
 			if executable in engine_path_files:
@@ -281,7 +290,7 @@ def getEngineBranch() -> dmx_version:
 	# Source 1 SFM special case
 	if path.lower().find("sourcefilmmaker") != -1:
 		return dmx_versions_source1["Source Filmmaker"] # hack for weird SFM folder structure, add a space too
-	
+
 	# Source 1 standard: use parent dir's name
 	name = os.path.basename(os.path.dirname(bpy.path.abspath(path))).title().replace("Sdk","SDK")
 	return dmx_versions_source1.get(name)
@@ -311,19 +320,21 @@ def count_exports(context):
 def animationLength(ad):
 	if ad.action:
 		return int(ad.action.frame_range[1])
+	if strips := [
+		strip.frame_end
+		for track in ad.nla_tracks
+		if not track.mute
+		for strip in track.strips
+	]:
+		return int(max(strips))
 	else:
-		strips = [strip.frame_end for track in ad.nla_tracks if not track.mute for strip in track.strips]
-		if strips:
-			return int(max(strips))
-		else:
-			return 0
+		return 0
 	
 def getFileExt(flex=False):
 	if State.datamodelEncoding != 0 and bpy.context.scene.vs.export_format == 'DMX':
 		return ".dmx"
 	else:
-		if flex: return ".vta"
-		else: return ".smd"
+		return ".vta" if flex else ".smd"
 
 def isWild(in_str):
 	wcards = [ "*", "?", "[", "]" ]
@@ -337,8 +348,8 @@ def getSmdVec(iterable):
 	return " ".join([getSmdFloat(val) for val in iterable])
 
 def appendExt(path,ext):
-	if not path.lower().endswith("." + ext) and not path.lower().endswith(".dmx"):
-		path += "." + ext
+	if not path.lower().endswith(f".{ext}") and not path.lower().endswith(".dmx"):
+		path += f".{ext}"
 	return path
 
 def printTimeMessage(start_time,name,job,type="SMD"):
@@ -346,26 +357,26 @@ def printTimeMessage(start_time,name,job,type="SMD"):
 	if elapsedtime == 1:
 		elapsedtime = "1 second"
 	elif elapsedtime > 1:
-		elapsedtime = str(elapsedtime) + " seconds"
+		elapsedtime = f"{str(elapsedtime)} seconds"
 	else:
 		elapsedtime = "under 1 second"
 
-	print(type,name,"{}ed in".format(job),elapsedtime,"\n")
+	print(type, name, f"{job}ed in", elapsedtime, "\n")
 
 def PrintVer(in_seq,sep="."):
-		rlist = list(in_seq[:])
-		rlist.reverse()
-		out = ""
-		for val in rlist:
-			try:
-				if int(val) == 0 and not len(out):
-					continue
-			except ValueError:
+	rlist = list(in_seq[:])
+	rlist.reverse()
+	out = ""
+	for val in rlist:
+		try:
+			if int(val) == 0 and not len(out):
 				continue
-			out = "{}{}{}".format(str(val),sep if sep else "",out) # NB last value!
-		if out.count(sep) == 1:
-			out += "0" # 1.0 instead of 1
-		return out.rstrip(sep)
+		except ValueError:
+			continue
+		out = f'{str(val)}{sep if sep else ""}{out}'
+	if out.count(sep) == 1:
+		out += "0" # 1.0 instead of 1
+	return out.rstrip(sep)
 
 def getUpAxisMat(axis):
 	if axis.upper() == 'X':
@@ -375,17 +386,13 @@ def getUpAxisMat(axis):
 	if axis.upper() == 'Z':
 		return Matrix()
 	else:
-		raise AttributeError("getUpAxisMat got invalid axis argument '{}'".format(axis))
+		raise AttributeError(f"getUpAxisMat got invalid axis argument '{axis}'")
 
 def MakeObjectIcon(object,prefix=None,suffix=None):
 	if not (prefix or suffix):
 		raise TypeError("A prefix or suffix is required")
 
-	if object.type == 'TEXT':
-		type = 'FONT'
-	else:
-		type = object.type
-
+	type = 'FONT' if object.type == 'TEXT' else object.type
 	out = ""
 	if prefix:
 		out += prefix
@@ -414,11 +421,11 @@ def removeObject(obj):
 
 		bpy.data.objects.remove(obj)
 		if d and d.users == 0:
-			if type == 'MESH':
-				bpy.data.meshes.remove(d)
 			if type == 'ARMATURE':
 				bpy.data.armatures.remove(d)
 
+			elif type == 'MESH':
+				bpy.data.meshes.remove(d)
 	return None if d else type
 	
 def select_only(ob):
@@ -480,7 +487,11 @@ def valvesource_vertex_maps(id):
 
 def actionsForFilter(filter):
 	import fnmatch
-	return list([action for action in bpy.data.actions if action.users and fnmatch.fnmatch(action.name, filter)])
+	return [
+		action
+		for action in bpy.data.actions
+		if action.users and fnmatch.fnmatch(action.name, filter)
+	]
 def shouldExportGroup(group):
 	return group.vs.export and not group.vs.mute
 
@@ -512,13 +523,12 @@ def getSelectedExportables():
 	seen = set()
 	for ob in bpy.context.selected_objects:
 		for exportable in getExportablesForObject(ob):
-			if not exportable.name in seen:
+			if exportable.name not in seen:
 				seen.add(exportable.name)
 				yield exportable
 
-	if len(seen) == 0 and bpy.context.active_object:
-		for exportable in getExportablesForObject(bpy.context.active_object):
-			yield exportable
+	if not seen and bpy.context.active_object:
+		yield from getExportablesForObject(bpy.context.active_object)
 
 def make_export_list(scene):
 	scene.vs.export_list.clear()
@@ -603,11 +613,11 @@ class Logger:
 		l = menu.layout
 		if len(self.log_errors):
 			for msg in self.log_errors:
-				l.label(text="{}: {}".format(pgettext("Error").upper(), msg))
+				l.label(text=f'{pgettext("Error").upper()}: {msg}')
 			l.separator()
 		if len(self.log_warnings):
 			for msg in self.log_warnings:
-				l.label(text="{}: {}".format(pgettext("Warning").upper(), msg))
+				l.label(text=f'{pgettext("Warning").upper()}: {msg}')
 
 	def elapsed_time(self):
 		return round(time.time() - self.startTime, 1)
@@ -617,11 +627,11 @@ class Logger:
 			message += get_id("exporter_report_suffix",True).format(len(self.log_errors),len(self.log_warnings))
 			if not bpy.app.background:
 				bpy.context.window_manager.popup_menu(self.list_errors,title=get_id("exporter_report_menu"))
-			
-			print("{} Errors and {} Warnings".format(len(self.log_errors),len(self.log_warnings)))
+
+			print(f"{len(self.log_errors)} Errors and {len(self.log_warnings)} Warnings")
 			for msg in self.log_errors: print("Error:",msg)
 			for msg in self.log_warnings: print("Warning:",msg)
-		
+
 		self.report({'INFO'},message)
 		print(message)
 

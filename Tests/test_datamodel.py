@@ -18,27 +18,33 @@ class _DatamodelTests():
 
 	def save(self):
 		out_dir = join(results_path,"datamodel")
-		out_file = join(out_dir,"{}_{}_{}.dmx".format(self.dm.format,self.format[0], self.format[1]))
+		out_file = join(
+			out_dir, f"{self.dm.format}_{self.format[0]}_{self.format[1]}.dmx"
+		)
 		os.makedirs(out_dir, exist_ok=True)
 		if os.path.isfile(out_file):
 			os.unlink(out_file)
 		self.dm.write(out_file,self.format[0],self.format[1])
-		
+
 		return datamodel.load(out_file)
 
 	def test_Vector(self):
 		self.create("vector")
 		vector = datamodel.Vector3([0,1,2])
-		self.dm.root["vecs"] = datamodel.make_array([vector for i in range(5)],datamodel.Vector3)
-		
+		self.dm.root["vecs"] = datamodel.make_array(
+			[vector for _ in range(5)], datamodel.Vector3
+		)
+
 		saved = self.save()
 		self.assertEqual(saved.root["vecs"][0], vector)
 
 	def test_Matrix(self):
 		self.create("matrix")
 		m = [[1.005] * 4] * 4
-		self.dm.root["matrix"] = datamodel.make_array([datamodel.Matrix(m) for i in range(5)],datamodel.Matrix)
-		
+		self.dm.root["matrix"] = datamodel.make_array(
+			[datamodel.Matrix(m) for _ in range(5)], datamodel.Matrix
+		)
+
 		saved = self.save()
 		for (a,b) in zip(saved.root["matrix"][0], m):
 			for (c,d) in zip(a,b):
@@ -52,14 +58,16 @@ class _DatamodelTests():
 		e["float_large"] = 1e20
 		e["color"] = datamodel.Color([255,0,255,128])
 		e["time"] = 30.5
-		self.dm.root["elements"] = datamodel.make_array([e for i in range(5)],datamodel.Element)
-		
+		self.dm.root["elements"] = datamodel.make_array(
+			[e for _ in range(5)], datamodel.Element
+		)
+
 		saved = self.save()
 
 		savedElem = saved.root["elements"][0]
 		self.assertEqual(e, savedElem)
 		self.assertEqual(len(e), len(savedElem))
-		
+
 		for (a,b) in zip(e.items(), savedElem.items()):
 			if isinstance(a[1], float):
 				self.assertLess(abs(a[1] - b[1]) / a[1], 1e-7)
@@ -104,7 +112,7 @@ class General(unittest.TestCase):
 	def test_ColorValidation(self):
 		datamodel.Color([255, 255, 255, 255])
 
-		for array in ([256, 0, 0, 0],   [-1, 0, 0, 0],   [list(), 0, 0, 0],   [0, 0, 0]):
+		for array in ([256, 0, 0, 0], [-1, 0, 0, 0], [[], 0, 0, 0], [0, 0, 0]):
 			self.assertRaises(TypeError, lambda: datamodel.Color(array))
 
 if __name__ == '__main__':

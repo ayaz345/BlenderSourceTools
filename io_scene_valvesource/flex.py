@@ -35,18 +35,28 @@ class DmxWriteFlexControllers(bpy.types.Operator):
 	@classmethod
 	def make_controllers(cls,id):
 		dm = datamodel.DataModel("model",1)
-		
+
 		objects = []
 		shapes = set()
-		
+
 		if type(id) == bpy.types.Collection:
-			objects.extend(list([ob for ob in id.objects if ob.data and ob.type in utils.shape_types and ob.data.shape_keys]))
+			objects.extend(
+				[
+					ob
+					for ob in id.objects
+					if ob.data and ob.type in utils.shape_types and ob.data.shape_keys
+				]
+			)
 		else:
 			objects.append(id)
-		
+
 		name = "flex_{}".format(id.name)
 		root = dm.add_element(name,id=name)
-		DmeCombinationOperator = dm.add_element("combinationOperator","DmeCombinationOperator",id=id.name+"controllers")
+		DmeCombinationOperator = dm.add_element(
+			"combinationOperator",
+			"DmeCombinationOperator",
+			id=f"{id.name}controllers",
+		)
 		root["combinationOperator"] = DmeCombinationOperator
 		controls = DmeCombinationOperator["controls"] = datamodel.make_array([],datamodel.Element)
 
@@ -64,7 +74,7 @@ class DmxWriteFlexControllers(bpy.types.Operator):
 			DmeCombinationInputControl["wrinkleScales"] = datamodel.make_array([0.0] * len(deltas),float)
 
 		for ob in [ob for ob in objects if ob.data.shape_keys]:
-			for shape in [shape for shape in ob.data.shape_keys.key_blocks[1:] if not getCorrectiveShapeSeparator() in shape.name and shape.name not in shapes]:
+			for shape in [shape for shape in ob.data.shape_keys.key_blocks[1:] if getCorrectiveShapeSeparator() not in shape.name and shape.name not in shapes]:
 				createController(ob.name, shape.name, [shape.name])
 				shapes.add(shape.name)
 
@@ -74,7 +84,7 @@ class DmxWriteFlexControllers(bpy.types.Operator):
 		controlValues = DmeCombinationOperator["controlValues"] = datamodel.make_array( [ [0.0,0.0,0.5] ] * len(controls), datamodel.Vector3)
 		DmeCombinationOperator["controlValuesLagged"] = datamodel.make_array( controlValues, datamodel.Vector3)
 		DmeCombinationOperator["usesLaggedValues"] = False
-		
+
 		DmeCombinationOperator["dominators"] = datamodel.make_array([],datamodel.Element)
 		targets = DmeCombinationOperator["targets"] = datamodel.make_array([],datamodel.Element)
 
@@ -136,10 +146,9 @@ class AddCorrectiveShapeDrivers(bpy.types.Operator):
 			subkeys = getCorrectiveShapeKeyDrivers(key) or []
 			if key.name.find(getCorrectiveShapeSeparator()) != -1:
 				name_subkeys = [subkey for subkey in key.name.split(getCorrectiveShapeSeparator()) if subkey in keys.key_blocks]
-				subkeys = set([*subkeys, *name_subkeys])
+				subkeys = {*subkeys, *name_subkeys}
 			if subkeys:
-				sorted = list(subkeys)
-				sorted.sort()
+				sorted = sorted(subkeys)
 				self.addDrivers(key, sorted)
 		return {'FINISHED'}
 
@@ -154,7 +163,7 @@ class AddCorrectiveShapeDrivers(bpy.types.Operator):
 			var.name = driver_key
 			var.targets[0].id_type = 'KEY'
 			var.targets[0].id = key.id_data
-			var.targets[0].data_path = "key_blocks[\"{}\"].value".format(driver_key)
+			var.targets[0].data_path = f'key_blocks[\"{driver_key}\"].value'
 
 class RenameShapesToMatchCorrectiveDrivers(bpy.types.Operator):
 	bl_idname = "object.sourcetools_rename_to_corrective_drivers"
@@ -169,8 +178,7 @@ class RenameShapesToMatchCorrectiveDrivers(bpy.types.Operator):
 	def execute(self, context):
 		renamed = 0
 		for key in context.active_object.data.shape_keys.key_blocks:
-			driver_shapes = getCorrectiveShapeKeyDrivers(key)
-			if driver_shapes:
+			if driver_shapes := getCorrectiveShapeKeyDrivers(key):
 				generated_name = getCorrectiveShapeSeparator().join(driver_shapes)
 				if key.name != generated_name:
 					key.name = generated_name
@@ -191,21 +199,15 @@ class InsertUUID(bpy.types.Operator):
 	def execute(self,context):
 		text = context.space_data.text
 		line = text.current_line
-		if 0 and len(line.body) >= 36: # 2.69 https://developer.blender.org/T38386
-			sel_range = [max(0,text.current_character - 36),min(len(line.body),text.current_character + 36)]
-			sel_range.sort()
-
-			m = re.search(r"[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}",line.body[sel_range[0]:sel_range[1]],re.I)
-			if m:
-				line.body = line.body[:m.start()] + str(datamodel.uuid.uuid4()) + line.body[m.end():]
-				return {'FINISHED'}
-		
 		text.write(str(datamodel.uuid.uuid4()))
 		return {'FINISHED'}
 
 class InvalidDriverError(LookupError):
 	def __init__(self, key, target_key):
-		LookupError(self, "Shape key '{}' has an invalid corrective driver targeting key '{}'".format(key, target_key))
+		LookupError(
+			self,
+			f"Shape key '{key}' has an invalid corrective driver targeting key '{target_key}'",
+		)
 		self.key = key
 		self.target_key = target_key
 
@@ -219,7 +221,7 @@ def getCorrectiveShapeKeyDrivers(shape_key, raise_on_invalid = False):
 		return m[1] if m else None
 
 	fcurve = next((fc for fc in drivers if shapeName(fc.data_path) == shape_key.name), None)
-	if not fcurve or not fcurve.driver or not fcurve.driver.type == 'MIN': return None
+	if not fcurve or not fcurve.driver or fcurve.driver.type != 'MIN': return None
 
 	keys = []
 	for variable in (v for v in fcurve.driver.variables if v.type == 'SINGLE_PROP' and v.id_data == owner and v.targets):

@@ -57,7 +57,7 @@ class _AddonTests():
 		try:
 			self.bpy = import_module(".bpy", self.module_subdir) if self.module_subdir else import_module("bpy")
 		except ImportError as ex:
-			self.skipTest("Could not import {}: {}".format(self.module_subdir, ex))
+			self.skipTest(f"Could not import {self.module_subdir}: {ex}")
 			return
 
 		try:
@@ -67,7 +67,7 @@ class _AddonTests():
 
 		self.bpy.ops.preferences.addon_enable(module='io_scene_valvesource')
 		self.bpy.app.debug_value = 1
-		self.bpy_version = ".".join(str(i) for i in self.bpy.app.version)			
+		self.bpy_version = ".".join(str(i) for i in self.bpy.app.version)
 		print("Blender version",self.bpy_version)
 
 	def compareResults(self, outputDir):
@@ -94,7 +94,7 @@ class _AddonTests():
 
 	def setupExportTest(self, blend):
 		self.blend = blend
-		self.bpy.ops.wm.open_mainfile(filepath=join(src_path, blend + ".blend"))
+		self.bpy.ops.wm.open_mainfile(filepath=join(src_path, f"{blend}.blend"))
 		blend_name = os.path.splitext(blend)[0]
 		self.setupExport(blend_name)
 		return blend_name
@@ -110,7 +110,7 @@ class _AddonTests():
 		def ex(do_scene):
 			result = self.bpy.ops.export_scene.smd(export_scene=do_scene)
 			self.assertTrue(result == {'FINISHED'})
-		
+
 		def section(*args):
 			print("\n\n********\n********  {} {}".format(self.bpy.context.scene.name,*args),"\n********")
 
@@ -141,14 +141,19 @@ class _AddonTests():
 		self.sceneSettings.smd_format = 'SOURCE'
 		ex(True)
 
-		qc_name = self.bpy.path.abspath("//" + blend_name + ".qc")
+		qc_name = self.bpy.path.abspath(f"//{blend_name}.qc")
 		sfm_usermod = join(steam_common_path,"SourceFilmmaker","game","usermod")
 		if steam_common_path and os.path.exists(qc_name):
 			if os.path.exists(sfm_usermod):
 				shutil.copy2(qc_name, self.sceneSettings.export_path)
 				self.sceneSettings.game_path = sfm_usermod
 				self.sceneSettings.engine_path = os.path.realpath(join(self.sceneSettings.game_path,"..","bin"))
-				self.assertEqual(self.bpy.ops.smd.compile_qc(filepath=join(self.sceneSettings.export_path, blend_name + ".qc")), {'FINISHED'})
+				self.assertEqual(
+					self.bpy.ops.smd.compile_qc(
+						filepath=join(self.sceneSettings.export_path, f"{blend_name}.qc")
+					),
+					{'FINISHED'},
+				)
 			else:
 				print("WARNING: Could not locate Source Filmmaker; skipped QC compile test.")
 
@@ -253,25 +258,31 @@ class _AddonTests():
 		if os.path.isdir(out_dir):
 			shutil.rmtree(out_dir)
 		os.makedirs(out_dir)
-		
+
 		for f in files:
 			self.assertEqual(self.bpy.ops.import_scene.smd(filepath=join(src_path,f)), {'FINISHED'})
-		
-		self.bpy.ops.wm.save_mainfile(filepath=join(out_dir,test_name + ".blend"),check_existing=False)
+
+		self.bpy.ops.wm.save_mainfile(
+			filepath=join(out_dir, f"{test_name}.blend"), check_existing=False
+		)
 
 	@unittest.skipUnless(sdk_content_path, "Source SDK not found")
 	def test_import_SMD(self):
-		self.runImportTest("import_smd",
-					 sdk_content_path + "hl2/modelsrc/humans_sdk/Male_sdk/Male_06_reference.smd",
-					 sdk_content_path + "hl2/modelsrc/humans_sdk/Male_sdk/Male_06_expressions.vta",
-					 sdk_content_path + "hl2/modelsrc/humans_sdk/Male_Animations_sdk/ShootSMG1.smd")
+		self.runImportTest(
+			"import_smd",
+			f"{sdk_content_path}hl2/modelsrc/humans_sdk/Male_sdk/Male_06_reference.smd",
+			f"{sdk_content_path}hl2/modelsrc/humans_sdk/Male_sdk/Male_06_expressions.vta",
+			f"{sdk_content_path}hl2/modelsrc/humans_sdk/Male_Animations_sdk/ShootSMG1.smd",
+		)
 		self.assertEqual(len(self.bpy.data.meshes["Male_06_reference"].shape_keys.key_blocks), 33)
 
 	@unittest.skipUnless(sdk_content_path, "Source SDK not found")
 	def test_import_DMX(self):
-		self.runImportTest("import_dmx",
-					 sdk_content_path + "tf/modelsrc/player/heavy/scripts/heavy_low.qc",
-					 sdk_content_path + "tf/modelsrc/player/heavy/animations/dmx/Die_HeadShot_Deployed.dmx")
+		self.runImportTest(
+			"import_dmx",
+			f"{sdk_content_path}tf/modelsrc/player/heavy/scripts/heavy_low.qc",
+			f"{sdk_content_path}tf/modelsrc/player/heavy/animations/dmx/Die_HeadShot_Deployed.dmx",
+		)
 		self.assertEqual(len(self.bpy.data.meshes["head=zero"].shape_keys.key_blocks), 43)
 
 	def test_Source2VertexData_RoundTrips(self):
@@ -294,11 +305,19 @@ class _AddonTests():
 		self.sceneSettings.use_kv2 = True
 
 		self.test_GenerateCorrectiveDrivers()
-		
+
 		self.setupExport(testname)
 		self.assertEqual(self.bpy.ops.export_scene.smd(), {'FINISHED'})
 
-		self.assertEqual(self.bpy.ops.import_scene.smd(filepath=join(self.sceneSettings.export_path, self.bpy.context.active_object.name + ".dmx")), {'FINISHED'})		
+		self.assertEqual(
+			self.bpy.ops.import_scene.smd(
+				filepath=join(
+					self.sceneSettings.export_path,
+					f"{self.bpy.context.active_object.name}.dmx",
+				)
+			),
+			{'FINISHED'},
+		)		
 
 		imported_keys = self.bpy.context.active_object.data.shape_keys.key_blocks
 		self.assertEqual(len(imported_keys), 4)

@@ -37,9 +37,8 @@ from bpy.props import StringProperty, BoolProperty, EnumProperty, IntProperty, C
 import importlib, sys
 for filename in [ f for f in os.listdir(os.path.dirname(os.path.realpath(__file__))) if f.endswith(".py") ]:
 	if filename == os.path.basename(__file__): continue
-	module = sys.modules.get("{}.{}".format(__name__,filename[:-3]))
-	if module: importlib.reload(module)
-
+	if module := sys.modules.get(f"{__name__}.{filename[:-3]}"):
+		importlib.reload(module)
 # clear out any scene update funcs hanging around, e.g. after a script reload
 for collection in [bpy.app.handlers.depsgraph_update_post, bpy.app.handlers.load_post]:
 	for func in collection:
@@ -71,15 +70,15 @@ def menu_func_textedit(self,context):
 	self.layout.operator(flex.InsertUUID.bl_idname)
 
 def export_active_changed(self, context):
-	if not context.scene.vs.export_list_active < len(context.scene.vs.export_list):
+	if context.scene.vs.export_list_active >= len(context.scene.vs.export_list):
 		context.scene.vs.export_list_active = len(context.scene.vs.export_list) - 1
 		return
 
 	item = get_active_exportable(context).item
-	
+
 	if type(item) == bpy.types.Collection and item.vs.mute: return
 	for ob in context.scene.objects: ob.select_set(False)
-	
+
 	if type(item) == bpy.types.Collection:
 		context.view_layer.objects.active = item.objects[0]
 		for ob in item.objects: ob.select_set(True)
@@ -91,11 +90,21 @@ def export_active_changed(self, context):
 #
 from bpy.types import PropertyGroup
 
-encodings = []
-for enc in datamodel.list_support()['binary']: encodings.append( (str(enc), f"Binary {enc}", '' ) )
-formats = []
-for version in set(x for x in [*dmx_versions_source1.values(), *dmx_versions_source2.values()] if x.format != 0):
-	formats.append((version.format_enum, version.format_title, ''))
+encodings = [
+	(str(enc), f"Binary {enc}", '')
+	for enc in datamodel.list_support()['binary']
+]
+formats = [
+	(version.format_enum, version.format_title, '')
+	for version in {
+		x
+		for x in [
+			*dmx_versions_source1.values(),
+			*dmx_versions_source2.values(),
+		]
+		if x.format != 0
+	}
+]
 formats.sort(key = lambda f: f[0])
 
 directory_subtype = 'DIR_PATH' if bpy.app.version != (3,1,0) else 'NONE' # https://developer.blender.org/T96691
@@ -105,10 +114,10 @@ class ValveSource_SceneProps(PropertyGroup):
 	qc_compile : BoolProperty(name=get_id("qc_compileall"),description=get_id("qc_compileall_tip"),default=False)
 	qc_path : StringProperty(name=get_id("qc_path"),description=get_id("qc_path_tip"),default="//*.qc",subtype="FILE_PATH")
 	engine_path : StringProperty(name=get_id("engine_path"),description=get_id("engine_path_tip"), subtype=directory_subtype,update=State.onEnginePathChanged)
-	
+
 	dmx_encoding : EnumProperty(name=get_id("dmx_encoding"),description=get_id("dmx_encoding_tip"),items=tuple(encodings),default='2')
 	dmx_format : EnumProperty(name=get_id("dmx_format"),description=get_id("dmx_format_tip"),items=tuple(formats),default='1')
-	
+
 	export_format : EnumProperty(name=get_id("export_format"),items=( ('SMD', "SMD", "Studiomdl Data" ), ('DMX', "DMX", "Datamodel Exchange" ) ),default='DMX')
 	up_axis : EnumProperty(name=get_id("up_axis"),items=axes,default='Z',description=get_id("up_axis_tip"))
 	material_path : StringProperty(name=get_id("dmx_mat_path"),description=get_id("dmx_mat_path_tip"))
