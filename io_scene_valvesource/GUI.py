@@ -32,20 +32,20 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 	def draw(self, context):
 		l = self.layout
 		l.operator_context = 'EXEC_DEFAULT'
-		
+
 		exportables = list(getSelectedExportables())
 		if len(exportables):
-			single_obs = list([ex for ex in exportables if ex.ob_type != 'COLLECTION'])
-			groups = list([ex for ex in exportables if ex.ob_type == 'COLLECTION'])
+			single_obs = [ex for ex in exportables if ex.ob_type != 'COLLECTION']
+			groups = [ex for ex in exportables if ex.ob_type == 'COLLECTION']
 			groups.sort(key=lambda g: g.name.lower())
-				
+
 			group_layout = l
 			for i,group in enumerate(groups): # always display all possible groups, as an object could be part of several
 				if type(self) == SMD_PT_Scene:
 					if i == 0: group_col = l.column(align=True)
 					if i % 2 == 0: group_layout = group_col.row(align=True)
 				group_layout.operator(SmdExporter.bl_idname, text=group.name, icon='GROUP').collection = group.item.name
-				
+
 			if len(exportables) > 1:
 				l.operator(SmdExporter.bl_idname, text=get_id("exportmenu_selected", True).format(len(exportables)), icon='OBJECT_DATA')
 			elif len(single_obs):
@@ -260,10 +260,18 @@ class SMD_OT_GenerateVertexAnimationQCSnippet(bpy.types.Operator):
 		item = get_active_exportable(c).item
 		fps = c.scene.render.fps / c.scene.render.fps_base
 		wm = c.window_manager
-		wm.clipboard = '$model "merge_me" {0}{1}'.format(item.name,getFileExt())
-		if c.scene.vs.export_format == 'SMD':
-			wm.clipboard += ' {{\n{0}\n}}\n'.format("\n".join(["\tvcafile {0}.vta".format(vca.name) for vca in item.vs.vertex_animations]))
-		else: wm.clipboard += '\n'
+		wm.clipboard = '$model "merge_me" {0}{1}'.format(item.name, getFileExt()) + (
+			' {{\n{0}\n}}\n'.format(
+				"\n".join(
+					[
+						"\tvcafile {0}.vta".format(vca.name)
+						for vca in item.vs.vertex_animations
+					]
+				)
+			)
+			if c.scene.vs.export_format == 'SMD'
+			else '\n'
+		)
 		wm.clipboard += "\n// vertex animation block begins\n$upaxis Y\n"
 		wm.clipboard += "\n".join(['''
 $boneflexdriver "vcabone_{0}" tx "{0}" 0 1
@@ -307,7 +315,10 @@ for map_name in vertex_maps:
 	
 		@classmethod
 		def poll(cls,c):
-			return is_mesh(c.active_object) and not cls.vertex_map in c.active_object.data.vertex_colors
+			return (
+				is_mesh(c.active_object)
+				and cls.vertex_map not in c.active_object.data.vertex_colors
+			)
 
 		def execute(self,c):
 			vc = c.active_object.data.vertex_colors.new(name=self.vertex_map)
@@ -367,11 +378,10 @@ class ExportableConfigurationPanel(bpy.types.Panel):
 
 	@classmethod
 	def get_item(cls, context):
-		active_exportable = get_active_exportable(context)
-		if not active_exportable:
+		if active_exportable := get_active_exportable(context):
+			return active_exportable.item
+		else:
 			return
-
-		return active_exportable.item
 
 	@classmethod
 	def poll(cls, context):
@@ -478,8 +488,8 @@ class SMD_PT_Armature(ExportableConfigurationPanel):
 		if State.exportFormat == ExportFormat.SMD:
 			col.prop(armature.data.vs,"implicit_zero_bone")
 			col.prop(armature.data.vs,"legacy_rotation")
-			
-		if armature.animation_data and not 'ActLib' in dir(bpy.types):
+
+		if armature.animation_data and 'ActLib' not in dir(bpy.types):
 			col.template_ID(armature.animation_data, "action", new="action.new")
 
 class SMD_PT_ShapeKeys(ExportableConfigurationPanel):
@@ -502,26 +512,30 @@ class SMD_PT_ShapeKeys(ExportableConfigurationPanel):
 			col = parent.column(align=True)
 			col.operator(AddCorrectiveShapeDrivers.bl_idname, icon='DRIVER',text=get_id("gen_drivers",True))
 			col.operator(RenameShapesToMatchCorrectiveDrivers.bl_idname, icon='SYNTAX_OFF',text=get_id("apply_drivers",True))
-			
+
 		if item.vs.flex_controller_mode == 'ADVANCED':
 			controller_source = col.row()
 			controller_source.alert = hasFlexControllerSource(item.vs.flex_controller_source) == False
 			controller_source.prop(item.vs,"flex_controller_source",text=get_id("exportables_flex_src"),icon = 'TEXT' if item.vs.flex_controller_source in bpy.data.texts else 'NONE')
-			
+
 			row = col.row(align=True)
 			row.operator(DmxWriteFlexControllers.bl_idname,icon='TEXT',text=get_id("exportables_flex_generate", True))
 			row.operator("wm.url_open",text=get_id("exportables_flex_help", True),icon='HELP').url = "http://developer.valvesoftware.com/wiki/Blender_SMD_Tools_Help#Flex_properties"
-			
+
 			insertCorrectiveUi(col)
-			
+
 			datablocks_dispayed = []
-			
+
 			for ob in [ob for ob in objects if ob.vs.export and ob.type in shape_types and ob.active_shape_key and ob.data not in datablocks_dispayed]:
 				if not len(datablocks_dispayed):
 					col.label(text=get_id("exportables_flex_split"))
 					sharpness_col = col.column(align=True)
 				r = sharpness_col.split(factor=0.33,align=True)
-				r.label(text=ob.data.name + ":",icon=MakeObjectIcon(ob,suffix='_DATA'),translate=False)
+				r.label(
+					text=f"{ob.data.name}:",
+					icon=MakeObjectIcon(ob, suffix='_DATA'),
+					translate=False,
+				)
 				r2 = r.split(factor=0.7,align=True)
 				if ob.data.vs.flex_stereo_mode == 'VGROUP':
 					r2.alert = ob.vertex_groups.get(ob.data.vs.flex_stereo_vg) is None
@@ -532,9 +546,9 @@ class SMD_PT_ShapeKeys(ExportableConfigurationPanel):
 				datablocks_dispayed.append(ob.data)
 		else:
 			insertCorrectiveUi(col)
-		
+
 		num_shapes, num_correctives = countShapes(objects)
-		
+
 		col.separator()
 		row = col.row()
 		row.alignment = 'CENTER'
@@ -554,9 +568,8 @@ class SMD_PT_VertexMaps(ExportableConfigurationPanel):
 		item = self.get_item(context)
 		is_collection = type(item) == bpy.types.Collection
 		if is_collection:
-			member = self.get_active_object(context)
-			if member:
-				title += " ({})".format(member.data.name)
+			if member := self.get_active_object(context):
+				title += f" ({member.data.name})"
 		self.bl_label = title
 		self.layout.label(icon='VPAINT_HLT')
 
@@ -584,9 +597,13 @@ class SMD_PT_Curves(ExportableConfigurationPanel):
 	def draw(self, context):
 		self.layout.label(text=get_id("exportables_curve_polyside"))
 		done = set()
-		for ob in [ob for ob in self.unpack_collection(context) if hasCurves(ob) and not ob.data in done]:
+		for ob in [ob for ob in self.unpack_collection(context) if hasCurves(ob) and ob.data not in done]:
 			row = self.layout.split(factor=0.33)
-			row.label(text=ob.data.name + ":",icon=MakeObjectIcon(ob,suffix='_DATA'),translate=False)
+			row.label(
+				text=f"{ob.data.name}:",
+				icon=MakeObjectIcon(ob, suffix='_DATA'),
+				translate=False,
+			)
 			row.prop(ob.data.vs,"faces",text="")
 			done.add(ob.data)
 

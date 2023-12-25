@@ -39,9 +39,9 @@ def list_support():
 def check_support(encoding,encoding_ver):
 	versions = list_support().get(encoding)
 	if not versions:
-		raise ValueError("DMX encoding \"{}\" is not supported".format(encoding))
+		raise ValueError(f'DMX encoding \"{encoding}\" is not supported')
 	if encoding_ver not in versions:
-		raise ValueError("Version {} of {} DMX is not supported".format(encoding_ver,encoding))
+		raise ValueError(f"Version {encoding_ver} of {encoding} DMX is not supported")
 
 def _encode_binary_string(string):
 	return bytes(string,'utf-8') + bytes(1)
@@ -59,12 +59,12 @@ def _sub_kv2_indent():
 def _validate_array_list(iterable,array_type):
 	if not iterable: return None
 	try:
-		return list([array_type(i) if type(i) != array_type else i for i in iterable])
+		return [array_type(i) if type(i) != array_type else i for i in iterable]
 	except Exception as e:
-		raise TypeError("Could not convert all values to {}: {}".format(array_type,e)) from e
+		raise TypeError(f"Could not convert all values to {array_type}: {e}") from e
 			
 def _quote(str):
-	return "\"{}\"".format(str)
+	return f'\"{str}\"'
 	
 def get_bool(file):
 	return file.read(1) != b'\x00'
@@ -72,8 +72,7 @@ def get_byte(file):
 	return int(unpack("B",file.read(1))[0])
 def get_char(file):
 	c = file.read(1)
-	if isinstance(c, str): return c
-	return unpack("c",c)[0].decode('ASCII')
+	return c if isinstance(c, str) else unpack("c",c)[0].decode('ASCII')
 def get_int(file):
 	return int( unpack("i",file.read(intsize))[0] )
 def get_short(file):
@@ -81,7 +80,7 @@ def get_short(file):
 def get_float(file):
 	return float( unpack("f",file.read(floatsize))[0] )
 def get_vec(file,dim):
-	return list( unpack("{}f".format(dim),file.read(floatsize*dim)) )
+	return list(unpack(f"{dim}f", file.read(floatsize*dim)))
 def get_color(file):
 	return Color(list(unpack("4B",file.read(4))))
 	
@@ -95,7 +94,7 @@ def get_str(file):
 
 def _get_kv2_repr(var):
 	t = type(var)
-	if t == float or t == int: # optimisation: very common, so first
+	if t in [float, int]: # optimisation: very common, so first
 		return str(var)
 	elif issubclass(t, (_Array,Matrix)):
 		return var.to_kv2()
@@ -105,7 +104,7 @@ def _get_kv2_repr(var):
 		return "1" if var else "0"
 	elif t == Binary:
 		return binascii.hexlify(var).decode('ASCII')
-	elif var == None:
+	elif var is None:
 		return ""
 	else:
 		return str(var)
@@ -123,18 +122,23 @@ class _Array(list):
 	def to_kv2(self):
 		if len(self) == 0:
 			return "[ ]"
-		if self.type == Element:
+		if self.type != Element:
+			return f'[{", ".join([_quote(_get_kv2_repr(item)) for item in self])}]'
+		out = f"\n{_kv2_indent}[\n"
+		_add_kv2_indent()
+		out += _kv2_indent
 
-			out = "\n{}[\n".format(_kv2_indent)
-			_add_kv2_indent()
-			out += _kv2_indent
+		out += f",\n{_kv2_indent}".join(
+			[
+				item.get_kv2()
+				if item and item._users == 1
+				else f'\"element\" {_quote(item.id if item else "")}'
+				for item in self
+			]
+		)
 
-			out += ",\n{}".format(_kv2_indent).join([item.get_kv2() if item and item._users == 1 else "\"element\" {}".format(_quote(item.id if item else "")) for item in self])
-
-			_sub_kv2_indent()
-			return "{}\n{}]".format(out,_kv2_indent)
-		else:
-			return "[{}]".format(", ".join([_quote(_get_kv2_repr(item)) for item in self]))
+		_sub_kv2_indent()
+		return f"{out}\n{_kv2_indent}]"
 		
 	def frombytes(self,file):
 		length = get_int(file)		
@@ -157,7 +161,7 @@ class _Vector(list):
 	type_str = ""
 	def __init__(self,l):
 		if len(l) != len(self.type_str):
-			raise TypeError("Expected {} values".format(len(self.type_str)))
+			raise TypeError(f"Expected {len(self.type_str)} values")
 		l = _validate_array_list(l,self.type)
 		super().__init__(l)
 		
@@ -260,7 +264,7 @@ class _TimeArray(_Array):
 		
 def make_array(l,t):
 	if t not in _dmxtypes_all:
-		raise TypeError("{} is not a valid datamodel attribute type".format(t))
+		raise TypeError(f"{t} is not a valid datamodel attribute type")
 	at = _get_array_type(t)
 	return at(l)
 		
@@ -294,16 +298,14 @@ class Element(collections.OrderedDict):
 		self.name = name
 		self.type = elemtype
 		self._is_placeholder = _is_placeholder
-		self._datamodels = set()
-		self._datamodels.add(datamodel)
-		
+		self._datamodels = {datamodel}
 		if id:
 			if isinstance(id,uuid.UUID): self._id = id
 			elif isinstance(id,str): self._id = uuid.uuid3(uuid.UUID('20ba94f8-59f0-4579-9e01-50aac4567d3b'),id)
 			else: raise ValueError("id must be uuid.UUID or str")
 		else:
 			self._id = uuid.uuid4()
-		
+
 		super().__init__()
 		
 	def __eq__(self,other):
@@ -313,24 +315,25 @@ class Element(collections.OrderedDict):
 		return True
 
 	def __repr__(self):
-		return "<Datamodel element \"{}\" ({})>".format(self.name,self.type)
+		return f'<Datamodel element \"{self.name}\" ({self.type})>'
 		
 	def __hash__(self):
 		return hash(self.id)
 		
 	def __getitem__(self,item):
-		if type(item) != str: raise TypeError("Attribute name must be a string, not {}".format(type(item)))
+		if type(item) != str:
+			raise TypeError(f"Attribute name must be a string, not {type(item)}")
 		try:
 			return super().__getitem__(item)
 		except KeyError as e:
-			raise AttributeError("No attribute \"{}\" on {}".format(item,self)) from e
+			raise AttributeError(f'No attribute \"{item}\" on {self}') from e
 			
 	def __setitem__(self,key,item):
 		key = str(key)
-		if key in ["name", "id"]: raise KeyError("\"{}\" is a reserved name".format(key))
-		
+		if key in {"name", "id"}: raise KeyError("\"{}\" is a reserved name".format(key))
+
 		def import_element(elem):
-			for dm in [dm for dm in self._datamodels if not dm in elem._datamodels]:
+			for dm in [dm for dm in self._datamodels if dm not in elem._datamodels]:
 				dm.validate_element(elem)
 				dm.elements.append(elem)
 				elem._datamodels.add(dm)
@@ -341,16 +344,16 @@ class Element(collections.OrderedDict):
 					if t == _ElementArray:
 						for arr_elem in attr:
 							import_element(arr_elem)
-		
+
 		t = type(item)
-		
+
 		if t in _dmxtypes_all or t == type(None):
 			if t == Element:
 					import_element(item)
 			elif t == _ElementArray:
 				for arr_elem in item:
 					import_element(arr_elem)
-			
+
 			return super().__setitem__(key,item)
 		else:
 			if t in _array_types:
@@ -366,7 +369,7 @@ class Element(collections.OrderedDict):
 		out += _quote(self.type)
 		out += "\n" + _kv2_indent + "{\n"
 		_add_kv2_indent()
-		
+
 		def _make_attr_str(name,dm_type,value, is_array = False):
 			if value is not None:
 				if is_array:
@@ -375,45 +378,44 @@ class Element(collections.OrderedDict):
 					return "{}\"{}\" \"{}\" \"{}\"\n".format(_kv2_indent,name,dm_type,value)
 			else:
 				return "{}\"{}\" {}\n".format(_kv2_indent,name,dm_type)
-		
+
 		out += _make_attr_str("id", "elementid", self.id)
 		out += _make_attr_str("name", "string", self.name)
-		
+
 		for name in self:
 			attr = self[name]
-			if attr == None:
+			if attr is None:
 				out += _make_attr_str(name, "element", None)
 				continue
-			
+
 			t = type(attr)
-			
+
 			if t == Element and attr._users < 2 and deep:
 				out += _kv2_indent
 				out += _quote(name)
 				out += " {}".format( attr.get_kv2() )
 				out += "\n"
-			else:				
+			else:		
 				if issubclass(t,_Array):
 					if t == _ElementArray:
 						type_str = "element_array"
 					else:
-						type_str = _dmxtypes_str[_dmxtypes_array.index(t)] + "_array"
+						type_str = f"{_dmxtypes_str[_dmxtypes_array.index(t)]}_array"
 				else:
 					type_str = _dmxtypes_str[_dmxtypes.index(t)]
-				
+
 				out += _make_attr_str(name, type_str, _get_kv2_repr(attr), issubclass(t,_Array))
 		_sub_kv2_indent()
 		out += _kv2_indent + "}"
 		return out
 
 	def tobytes(self):
-		if self._is_placeholder:
-			if self.encoding_ver < 5:
-				return b'-1'
-			else:
-				return bytes.join(b'',b'-2',bytes.decode(self.id,encoding='ASCII'))
-		else:
+		if not self._is_placeholder:
 			return struct.pack("i",self._index)
+		if self.encoding_ver < 5:
+			return b'-1'
+		else:
+			return bytes.join(b'',b'-2',bytes.decode(self.id,encoding='ASCII'))
 
 class _ElementArray(_Array):
 	type = Element
@@ -450,12 +452,12 @@ def _get_dmx_id_type(encoding,version,id):
 			return attr_list_v2[id]
 		if version in [9]:
 			if id >= 32: # array
-				return eval("_" + attr_list_v3[id-32].__name__.capitalize() + "Array")
+				return eval(f"_{attr_list_v3[id - 32].__name__.capitalize()}Array")
 			return attr_list_v3[id]
 	if encoding == "keyvalues2":
 		return _dmxtypes[ _dmxtypes_str.index(id) ]
-				
-	raise ValueError("Type ID {} invalid in {} {}".format(id,encoding,version))
+
+	raise ValueError(f"Type ID {id} invalid in {encoding} {version}")
 	
 def _get_dmx_type_id(encoding,version,t):	
 	if t == type(None): t = Element
@@ -473,9 +475,9 @@ def _get_dmx_type_id(encoding,version,t):
 		elif encoding == "binary_proto":
 			return attr_list_v1.index(t)
 	except ValueError as e:
-		raise ValueError("Type {} not supported in {} {}".format(t,encoding,version)) from e
+		raise ValueError(f"Type {t} not supported in {encoding} {version}") from e
 
-	raise ValueError("Encoding {} not recognised".format(encoding))
+	raise ValueError(f"Encoding {encoding} not recognised")
 
 class _StringDictionary(list):
 	dummy = False
@@ -573,7 +575,9 @@ class DataModel:
 		self.allow_random_ids = True
 		
 	def __repr__(self):
-		return "<Datamodel 0x{}{}>".format(id(self)," (root == \"{}\")".format(self.root.name) if self.root else "")
+		return "<Datamodel 0x{}{}>".format(
+			id(self), f' (root == \"{self.root.name}\")' if self.root else ""
+		)
 
 	def validate_element(self,elem):
 		if elem._is_placeholder:
@@ -583,13 +587,15 @@ class DataModel:
 			collision = self.elements[self.elements.index(elem)]
 		except ValueError:
 			return # no match
-		
+
 		if not collision._is_placeholder:
-			raise IDCollisionError("{} invalid for {}: ID collision with {}. ID is {}.".format(elem, self, collision, elem.id))
+			raise IDCollisionError(
+				f"{elem} invalid for {self}: ID collision with {collision}. ID is {elem.id}."
+			)
 		
 	def add_element(self,name,elemtype="DmElement",id=None,_is_placeholder=False):
-		if id == None and not self.allow_random_ids:
-			raise ValueError("{} does not allow random IDs.".format(self))
+		if id is None and not self.allow_random_ids:
+			raise ValueError(f"{self} does not allow random IDs.")
 		elem = Element(self,name,elemtype,id,_is_placeholder)
 		self.validate_element(elem)
 		self.elements.append(elem)
@@ -609,7 +615,7 @@ class DataModel:
 	def _write(self,value, suppress_dict = None):
 		t = type(value)
 		is_array = issubclass(t, _Array)
-		if suppress_dict == None:
+		if suppress_dict is None:
 			suppress_dict = self.encoding_ver < 4
 
 		if is_array:
@@ -617,13 +623,13 @@ class DataModel:
 			self.out.write( struct.pack("i",len(value)) )
 		else:
 			value = [value]
-		
+
 		if t in [bytes,Binary]:
 			for item in value:
 				if t == Binary:
 					self.out.write( struct.pack("i",len(item)) )
 				self.out.write(item)
-		
+
 		elif t == uuid.UUID:
 			self.out.write(b''.join([id.bytes_le for id in value]))
 		elif t == str:
@@ -636,16 +642,16 @@ class DataModel:
 			self.out.write(bytes.join(b'',[item.tobytes() if item else struct.pack("i",-1) for item in value]))
 		elif issubclass(t,(_Vector,Matrix, Time)):
 			self.out.write(bytes.join(b'',[item.tobytes() for item in value]))
-		
+
 		elif t == bool:
 			self.out.write( struct.pack("b" * len(value),*value) )
 		elif t == int:
 			self.out.write( struct.pack("i" * len(value),*value) )
 		elif t == float:
 			self.out.write( struct.pack("f" * len(value),*value) )
-			
+
 		else:
-			raise TypeError("Cannot write attributes of type {}".format(t))
+			raise TypeError(f"Cannot write attributes of type {t}")
 	
 	def _write_element_index(self,elem):
 		if elem._is_placeholder or hasattr(elem,"_index"): return
@@ -673,7 +679,7 @@ class DataModel:
 				attr = elem[name]
 				self._write(name, suppress_dict = False)
 				self._write( struct.pack("b", _get_dmx_type_id(self.encoding, self.encoding_ver, type(attr) )) )
-				if attr == None:
+				if attr is None:
 					self._write(-1)
 				else:
 					self._write(attr)
@@ -768,18 +774,18 @@ def load(path = None, in_file = None, element_path = None):
 		raise TypeError("element_path must be a list containing element names")
 	if not in_file:
 		in_file = open(path,'rb')
-	
+
 	try:
 		import re
-		
+
 		try:
 			header = ""
 			while True:
 				header += get_char(in_file)
 				if header.endswith(">"): break
-			
+
 			matches = re.findall(header_format_regex,header)
-			
+
 			if len(matches) != 1 or len(matches[0]) != 4:
 				matches = re.findall(header_proto2_regex,header)
 				if len(matches) == 1 and len(matches[0]) == 1:
@@ -795,10 +801,10 @@ def load(path = None, in_file = None, element_path = None):
 				format_ver = int(format_ver)
 		except Exception as e:
 			raise IOError("Could not read DMX header") from e
-		
+
 		check_support(encoding,encoding_ver)
 		dm = DataModel(format,format_ver)
-		
+
 		class LineTracker():
 			line = 0
 
@@ -808,30 +814,30 @@ def load(path = None, in_file = None, element_path = None):
 		line_tracker = LineTracker()
 
 		max_elem_path = len(element_path) + 1 if element_path else 0
-		
+
 		if encoding == 'keyvalues2':
+
 			class AttributeReference:
 				def __init__(self,Owner,Name,Index=-1):
 					self.Owner = Owner
 					self.Name = Name
 					self.Index = Index
-			
+
 			def parse_line(line):
 				return re.findall("\"(.*?)\"",line.strip("\n\t ") )
-				
+
 			def read_element(elem_type, line_tracker):
 				name = None
 				prefix = elem_type == "$prefix_element$"
 				if prefix: element_chain.append(dm.prefix_attributes)
-				
+
 				def read_value(name,type_str,kv2_value, index=-1):
 					if type_str == 'element': # make a record; will link everything up once all elements have been read
 						if not kv2_value:
 							return None
-						else:
-							element_users[kv2_value].append(AttributeReference(element_chain[-1], name, index))
-							return dm.add_element("Missing element",id=uuid.UUID(hex=kv2_value),_is_placeholder=True)
-					
+						element_users[kv2_value].append(AttributeReference(element_chain[-1], name, index))
+						return dm.add_element("Missing element",id=uuid.UUID(hex=kv2_value),_is_placeholder=True)
+
 					elif type_str == 'string': return kv2_value
 					elif type_str in ['int',"uint8"]: return int(kv2_value)
 					elif type_str == "uint64": return int(kv2_value, 0)
@@ -841,18 +847,18 @@ def load(path = None, in_file = None, element_path = None):
 					elif type_str.startswith('vector') or type_str in ['color','quaternion','angle','matrix']:
 						return _get_type_from_string(type_str)( [float(i) for i in kv2_value.split(" ")] )
 					elif type_str == 'binary': return Binary(binascii.unhexlify(kv2_value))
-				
+
 				new_elem = None
 				for line_raw in in_file:
 					next(line_tracker)
 					if line_raw.strip("\n\t, ").endswith("}"):
 						#print("{}- {}".format('\t' * (len(element_chain)-1),element_chain[-1].name))
 						return element_chain.pop()
-					
+
 					line = parse_line(line_raw)
 					if len(line) == 0:
 						continue
-					
+
 					if line[0] == 'id':
 						if not prefix:
 							new_elem = dm.add_element(name,elem_type,uuid.UUID(hex=line[2]))
@@ -862,7 +868,7 @@ def load(path = None, in_file = None, element_path = None):
 						if new_elem: new_elem.name = line[2]
 						else: name = line[2]
 						continue
-					
+
 					# don't read elements outside the element path
 					if max_elem_path and name and len(dm.elements):
 						if len(element_path):
@@ -880,40 +886,40 @@ def load(path = None, in_file = None, element_path = None):
 							return
 						elif len(element_path):
 							del element_path[0]
-					
-					if new_elem == None and not prefix:
+
+					if new_elem is None and not prefix:
 						continue
-					
+
 					if len(line) >= 2:
 						if line[1] == "element_array":
 							arr_name = line[0]
 							arr = _ElementArray()
-							
+
 							if "[" not in line_raw: # immediate "[" means and empty array; elements must be on separate lines
 								for line in in_file:
 									next(line_tracker)
 									if "[" in line: continue
 									if "]" in line: break
 									line = parse_line(line)
-									
+
 									if len(line) == 1:
 										arr.append( read_element(line[0], line_tracker) )
 									elif len(line) == 2:
 										arr.append( read_value(arr_name,"element",line[1],index=len(arr)) )
-							
+
 							element_chain[-1][arr_name] = arr
 							continue
-						
+
 						elif line[1].endswith("_array"):
 							arr_name = line[0]
 							arr_type_str = line[1].split("_")[0]
 							arr = _get_array_type(_get_type_from_string(arr_type_str))()
-							
+
 							if "[" in line_raw: # one-line array
 								for item in line[2:]:
 									arr.append(read_value(arr_name,arr_type_str,item))
 								element_chain[-1][arr_name] = arr
-								
+
 							else: # multi-line array
 								for line in in_file:
 									next(line_tracker)
@@ -922,11 +928,11 @@ def load(path = None, in_file = None, element_path = None):
 									if "]" in line:
 										element_chain[-1][arr_name] = arr
 										break
-										
+
 									line = parse_line(line)
 									if line:
 										arr.append(read_value(arr_name,arr_type_str,line[0]))
-						
+
 						elif len(line) == 2: # inline element or binary
 							if line[1] == "binary":
 								num_quotes = 0
@@ -946,10 +952,10 @@ def load(path = None, in_file = None, element_path = None):
 							element_chain[-1][line[0]] = read_value(line[0],line[1],line[2])
 
 				raise IOError("Unexpected EOF")
-			
+
 			if hasattr(in_file,'mode') and 'b' in in_file.mode: in_file = io.TextIOWrapper(in_file)
 			in_file.seek(len(header))
-			
+
 			element_chain = []
 			element_users = collections.defaultdict(list)
 			for line in in_file:
@@ -957,12 +963,12 @@ def load(path = None, in_file = None, element_path = None):
 					next(line_tracker)
 					line = parse_line(line)
 					if len(line) == 0: continue
-				
-					if len(element_chain) == 0 and len(line) == 1:
+
+					if not element_chain and len(line) == 1:
 						read_element(line[0], line_tracker)
 				except Exception as ex:
 					raise DatamodelParseError("Parsing of {} failed on line {}".format(path, line_tracker.line)) from ex
-			
+
 			for element in dm.elements:
 				if element._is_placeholder == True: continue
 				users = element_users[str(element.id)]
@@ -971,7 +977,7 @@ def load(path = None, in_file = None, element_path = None):
 						user_info.Owner[user_info.Name] = element
 					else:
 						user_info.Owner[user_info.Name][user_info.Index] = element
-				
+
 		elif encoding in ['binary', 'binary_proto']:
 			in_file.seek(2,1) # skip header's line break and null terminator
 
@@ -984,12 +990,12 @@ def load(path = None, in_file = None, element_path = None):
 						return dm.add_element("Missing element",id=uuid.UUID(hex=get_str(in_file)),_is_placeholder=True)
 					else:
 						return dm.elements[element_index]
-					
+
 				elif attr_type == str:		return get_str(in_file) if encoding_ver < 4 or from_array else dm._string_dict.read_string(in_file)
 				elif attr_type == int:		return get_int(in_file)
 				elif attr_type == float:	return get_float(in_file)
 				elif attr_type == bool:		return get_bool(in_file)
-					
+
 				elif attr_type == Vector2:		return Vector2(get_vec(in_file,2))
 				elif attr_type == Vector3:		return Vector3(get_vec(in_file,3))
 				elif attr_type == Angle:		return Angle(get_vec(in_file,3))
@@ -999,14 +1005,14 @@ def load(path = None, in_file = None, element_path = None):
 					out = []
 					for _ in range(4): out.append(get_vec(in_file,4))
 					return Matrix(out)
-					
+
 				elif attr_type == Color:		return get_color(in_file)
 				elif attr_type == Time: return Time.from_int(get_int(in_file))
 				elif attr_type == Binary: return Binary(in_file.read(get_int(in_file)))
-					
+
 				else:
 					raise TypeError("Cannot read attributes of type {}".format(attr_type))
-			
+
 			def read_element(elem, use_string_dict = True):
 				#print(elem.name,"@",in_file.tell())
 				num_attributes = get_int(in_file)
@@ -1028,17 +1034,17 @@ def load(path = None, in_file = None, element_path = None):
 			if encoding_ver >= 9:
 				for _ in range(get_int(in_file)):
 					read_element(dm.prefix_attributes, use_string_dict = False)
-			
+
 			dm._string_dict = _StringDictionary(encoding,encoding_ver,in_file=in_file)			
 			num_elements = get_int(in_file)
-			
+
 			# element headers
 			for _ in range(num_elements):
 				elemtype = dm._string_dict.read_string(in_file)
 				name = dm._string_dict.read_string(in_file) if encoding_ver >= 4 else get_str(in_file)
 				id = uuid.UUID(bytes_le = in_file.read(16)) # little-endian
 				dm.add_element(name,elemtype,id)			
-			
+
 			# element bodies
 			for elem in [elem for elem in dm.elements if not elem._is_placeholder]:
 				read_element(elem)

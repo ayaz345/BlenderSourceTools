@@ -1030,10 +1030,7 @@ _data = {
 }
 
 def _get_ids():	
-	ids = {}
-	for id,values in _data.items():
-		ids[id] = values['en']
-	return ids
+	return {id: values['en'] for id, values in _data.items()}
 ids = _get_ids()
 
 def _get_translations():
@@ -1041,7 +1038,7 @@ def _get_translations():
 	translations = collections.defaultdict(dict)
 	for lang in _languages:
 		for id,values in _data.items():
-			value = values.get(lang)
-			if value: translations[lang][(None, ids[id])] = value
+			if value := values.get(lang):
+				translations[lang][(None, ids[id])] = value
 	return translations
 translations = _get_translations()

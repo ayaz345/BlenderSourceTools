@@ -75,11 +75,10 @@ class SmdImporter(bpy.types.Operator, Logger):
 				self.num_files_imported = self.readSMD(filepath, self.properties.upAxis, self.properties.rotMode, smd_type=FLEX)
 			elif filepath_lc.endswith('.dmx'):
 				self.num_files_imported = self.readDMX(filepath, self.properties.upAxis, self.properties.rotMode)
+			elif len(filepath_lc) == 0:
+				self.report({'ERROR'},get_id("importer_err_nofile"))
 			else:
-				if len(filepath_lc) == 0:
-					self.report({'ERROR'},get_id("importer_err_nofile"))
-				else:
-					self.report({'ERROR'},get_id("importer_err_badfile", True).format(os.path.basename(filepath)))
+				self.report({'ERROR'},get_id("importer_err_badfile", True).format(os.path.basename(filepath)))
 
 			self.append = pre_append
 
@@ -148,7 +147,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 
 		# Finished the file
 
-		if smd.jobType == None:
+		if smd.jobType is None:
 			print("- This is a skeltal animation or pose") # No triangles, no flex - must be animation
 			smd.jobType = ANIM
 			self.ensureAnimationBonesValidated()
@@ -159,7 +158,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 	def parseQuoteBlockedLine(self,line,lower=True):
 		if len(line) == 0:
 			return ["\n"]
-		
+
 		qc = self.qc
 		words = []
 		last_word_start = 0
@@ -194,7 +193,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 					continue
 
 			# quote block
-			if char == "\"" and not pchar == "\\": # quotes can be escaped
+			if char == "\"" and pchar != "\\": # quotes can be escaped
 				in_quote = (in_quote == False)
 			if not in_quote:
 				if char in [" ","\t"]:
@@ -205,12 +204,8 @@ class SmdImporter(bpy.types.Operator, Logger):
 						words.append(cur_word)
 					last_word_start = i+1 # we are in whitespace, first new char is the next one
 
-		# catch last word and any '{'s crashing into it
-		needBracket = False
 		cur_word = line[last_word_start:i]
-		if cur_word.endswith("{"):
-			needBracket = True
-
+		needBracket = bool(cur_word.endswith("{"))
 		cur_word = cur_word.strip("\"{")
 		if len(cur_word) > 0:
 			words.append(cur_word)
@@ -218,7 +213,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 		if needBracket:
 			words.append("{")
 
-		if line.endswith("\\\\\n") and (len(words) == 0 or words[-1] != "\\\\"):
+		if line.endswith("\\\\\n") and (not words or words[-1] != "\\\\"):
 			words.append("\\\\") # macro continuation beats everything
 
 		return words
@@ -442,7 +437,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 			ops.pose.armature_apply()
 
 			bone_vis = None if self.properties.boneMode == 'NONE' else bpy.data.objects.get("smd_bone_vis")
-			
+
 			if self.properties.boneMode == 'SPHERE' and (not bone_vis or bone_vis.type != 'MESH'):
 					ops.mesh.primitive_ico_sphere_add(subdivisions=3,radius=2)
 					bone_vis = bpy.context.active_object
@@ -456,7 +451,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 					bone_vis.use_fake_user = True
 					bone_vis.empty_display_type = 'ARROWS'
 					bone_vis.empty_display_size = 5
-				
+
 			# Calculate armature dimensions...Blender should be doing this!
 			maxs = [0,0,0]
 			mins = [0,0,0]
@@ -464,55 +459,55 @@ class SmdImporter(bpy.types.Operator, Logger):
 				for i in range(3):
 					maxs[i] = max(maxs[i],bone.head_local[i])
 					mins[i] = min(mins[i],bone.head_local[i])
-		
+
 			dimensions = []
 			if self.qc: self.qc.dimensions = dimensions
 			for i in range(3):
 				dimensions.append(maxs[i] - mins[i])
-		
+
 			length = max(0.001, (dimensions[0] + dimensions[1] + dimensions[2]) / 600) # very small indeed, but a custom bone is used for display
-		
+
 			# Apply spheres
 			ops.object.mode_set(mode='EDIT')
 			for bone in [smd.a.data.edit_bones[b.name] for b in keyframes.keys()]:
 				bone.tail = bone.head + (bone.tail - bone.head).normalized() * length # Resize loose bone tails based on armature size
 				smd.a.pose.bones[bone.name].custom_shape = bone_vis # apply bone shape
-				
-		
+
+
 		if smd.jobType == ANIM:
 			if not smd.a.animation_data:
 				smd.a.animation_data_create()
-			
+
 			action = bpy.data.actions.new(smd.jobName)
-			
+
 			if 'ActLib' in dir(bpy.types):
 				smd.a.animation_data.action_library.add()
 			else:
 				action.use_fake_user = True
-				
+
 			smd.a.animation_data.action = action
-			
+
 			if 'fps' in dir(action):
 				action.fps = fps if fps else 30
 				bpy.context.scene.render.fps = 60
 				bpy.context.scene.render.fps_base = 1
-		
+
 			ops.object.mode_set(mode='POSE')
-		
+
 			# Create an animation
 			if 'ActLib' in dir(bpy.types):
 				bpy.context.scene.use_preview_range = bpy.context.scene.use_preview_range_action_lock = True
 			else:
 				bpy.context.scene.frame_start = 0
 				bpy.context.scene.frame_end = num_frames - 1		
-			
+
 			for bone in smd.a.pose.bones:
 				bone.rotation_mode = smd.rotMode
-				
+
 			for bone,frames in list(keyframes.items()):
 				if not frames:
 					del keyframes[bone]
-			
+
 			if smd.isDMX == False:
 				# Remove every point but the first unless there is motion
 				still_bones = list(keyframes.keys())
@@ -525,7 +520,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 							break
 				for bone in still_bones:
 					keyframes[bone] = [keyframes[bone][0]]
-			
+
 			# Create Blender keyframes
 			def ApplyRecursive(bone):
 				keys = keyframes.get(bone)
@@ -533,42 +528,46 @@ class SmdImporter(bpy.types.Operator, Logger):
 					# Generate curves
 					curvesLoc = None
 					curvesRot = None
-					bone_string = "pose.bones[\"{}\"].".format(bone.name)				
+					bone_string = "pose.bones[\"{}\"].".format(bone.name)
 					group = action.groups.new(name=bone.name)
 					for keyframe in keys:
 						if curvesLoc and curvesRot: break
 						if keyframe.pos and not curvesLoc:
 							curvesLoc = []
 							for i in range(3):
-								curve = action.fcurves.new(data_path=bone_string + "location",index=i)
+								curve = action.fcurves.new(data_path=f"{bone_string}location", index=i)
 								curve.group = group
 								curvesLoc.append(curve)
 						if keyframe.rot and not curvesRot:
 							curvesRot = []
 							for i in range(3 if smd.rotMode == 'XYZ' else 4):
-								curve = action.fcurves.new(data_path=bone_string + "rotation_" + ("euler" if smd.rotMode == 'XYZ' else "quaternion"),index=i)
+								curve = action.fcurves.new(
+									data_path=f"{bone_string}rotation_"
+									+ ("euler" if smd.rotMode == 'XYZ' else "quaternion"),
+									index=i,
+								)
 								curve.group = group
 								curvesRot.append(curve)
-					
+
 					# Apply each imported keyframe
 					for keyframe in keys:
 						# Transform
 						if smd.a.data.vs.legacy_rotation:
 							keyframe.matrix @= mat_BlenderToSMD.inverted()
-						
+
 						if bone.parent:
 							if smd.a.data.vs.legacy_rotation: parentMat = bone.parent.matrix @ mat_BlenderToSMD
 							else: parentMat = bone.parent.matrix
 							bone.matrix = parentMat @ keyframe.matrix
 						else:
 							bone.matrix = getUpAxisMat(smd.upAxis) @ keyframe.matrix
-						
+
 						# Key location					
 						if keyframe.pos:
 							for i in range(3):
 								curvesLoc[i].keyframe_points.add(1)
 								curvesLoc[i].keyframe_points[-1].co = [keyframe.frame, bone.location[i]]
-						
+
 						# Key rotation
 						if keyframe.rot:
 							if smd.rotMode == 'XYZ':
@@ -583,12 +582,12 @@ class SmdImporter(bpy.types.Operator, Logger):
 				# Recurse
 				for child in bone.children:
 					ApplyRecursive(child)
-			
+
 			# Start keying
 			for bone in smd.a.pose.bones:			
 				if not bone.parent:
 					ApplyRecursive(bone)
-			
+
 			for fc in action.fcurves:
 				fc.update()
 
@@ -598,13 +597,13 @@ class SmdImporter(bpy.types.Operator, Logger):
 			if smd.rotMode == 'XYZ': bone.rotation_euler.zero()
 			else: bone.rotation_quaternion.identity()
 		scn = bpy.context.scene
-		
+
 		if scn.frame_current == 1: # Blender starts on 1, Source starts on 0
 			scn.frame_set(0)
 		else:
 			scn.frame_set(scn.frame_current)
 		ops.object.mode_set(mode='OBJECT')
-		
+
 		print( "- Imported {} frames of animation".format(num_frames) )
 
 	def getMeshMaterial(self,mat_name):
@@ -629,13 +628,10 @@ class SmdImporter(bpy.types.Operator, Logger):
 				md.materials.append(mat)
 				mat_ind = len(md.materials) - 1
 		else: # material does not exist
-			print("- New material: {}".format(mat_name))
+			print(f"- New material: {mat_name}")
 			mat = bpy.data.materials.new(mat_name)
 			md.materials.append(mat)
-			# Give it a random colour
-			randCol = []
-			for i in range(3):
-				randCol.append(random.uniform(.4,1))
+			randCol = [random.uniform(.4,1) for _ in range(3)]
 			randCol.append(1)
 			mat.diffuse_color = randCol
 			if smd.jobType == PHYS:
@@ -815,7 +811,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 					for obj in bpy.context.selected_objects:
 						if obj.type in shape_types:
 							smd.m = obj
-				
+
 		if not smd.m:
 			self.error(get_id("importer_err_shapetarget")) # FIXME: this could actually be supported
 			return
@@ -826,6 +822,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 
 		def vec_round(v):
 			return Vector([round(co,3) for co in v])
+
 		co_map = {}
 		mesh_cos = [vert.co for vert in smd.m.data.vertices]
 		mesh_cos_rnd = None
@@ -833,25 +830,25 @@ class SmdImporter(bpy.types.Operator, Logger):
 		smd.vta_ref = None
 		vta_cos = []
 		vta_ids = []
-		
+
 		making_base_shape = True
 		bad_vta_verts = []
 		num_shapes = 0
 		md = smd.m.data
-		
+
 		for line in smd.file:
 			line = line.rstrip("\n")
-			
+
 			if smdBreak(line):
 				break
 			if smdContinue(line):
 				continue
-			
+
 			values = line.split()
 
 			if values[0] == "time":
 				shape_name = smd.shapeNames.get(values[1])
-				if smd.vta_ref == None:
+				if smd.vta_ref is None:
 					if not hasShapes(smd.m, False): smd.m.shape_key_add(name=shape_name if shape_name else "Basis")
 					vd = bpy.data.meshes.new(name="VTA vertices")
 					vta_ref = smd.vta_ref = bpy.data.objects.new(name=vd.name,object_data=vd)
@@ -864,13 +861,13 @@ class SmdImporter(bpy.types.Operator, Logger):
 					vd.vertices.foreach_set("co",vta_cos)
 					num_vta_verts = len(vd.vertices)
 					del vta_cos
-					
+
 					mod = vta_ref.modifiers.new(name="VTA Shrinkwrap",type='SHRINKWRAP')
 					mod.target = smd.m
 					mod.wrap_method = 'NEAREST_VERTEX'
-					
+
 					vd = bpy.data.meshes.new_from_object(vta_ref.evaluated_get(bpy.context.evaluated_depsgraph_get()))
-					
+
 					vta_ref.modifiers.remove(mod)
 					del mod
 
@@ -889,7 +886,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 								bad_vta_verts.append(i)
 								continue
 						co_map[id] = map_id
-					
+
 					bpy.data.meshes.remove(vd)
 					del vd
 
@@ -905,7 +902,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 					else:
 						removeObject(vta_ref)
 					making_base_shape = False
-				
+
 				if not making_base_shape:
 					smd.m.shape_key_add(name=shape_name if shape_name else values[1])
 					num_shapes += 1
@@ -938,7 +935,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 
 		if outer_qc:
 			print("\nQC IMPORTER: now working on",filename)
-			
+
 			qc = self.qc = QcInfo()
 			qc.startTime = time.time()
 			qc.jobName = filename
@@ -952,219 +949,217 @@ class SmdImporter(bpy.types.Operator, Logger):
 		else:
 			qc = self.qc
 
-		file = open(filepath, 'r')
-		in_bodygroup = in_lod = in_sequence = False
-		lod = 0
-		for line_str in file:
-			line = self.parseQuoteBlockedLine(line_str)
-			if len(line) == 0:
-				continue
-			#print(line)
-			
-			# handle individual words (insert QC variable values, change slashes)
-			i = 0
-			for word in line:
-				for var in qc.vars.keys():
-					kw = "${}$".format(var)
-					pos = word.lower().find(kw)
-					if pos != -1:
-						word = word.replace(word[pos:pos+len(kw)], qc.vars[var])			
-				line[i] = word.replace("/","\\") # studiomdl is Windows-only
-				i += 1
-			
-			# Skip macros
-			if line[0] == "$definemacro":
-				self.warning(get_id("importer_qc_macroskip", True).format(filename))
-				while line[-1] == "\\\\":
-					line = self.parseQuoteBlockedLine( file.readline())
-
-			# register new QC variable
-			if line[0] == "$definevariable":
-				qc.vars[line[1]] = line[2].lower()
-				continue
-
-			# dir changes
-			if line[0] == "$pushd":
-				if line[1][-1] != "\\":
-					line[1] += "\\"
-				qc.dir_stack.append(line[1])
-				continue
-			if line[0] == "$popd":
-				try:
-					qc.dir_stack.pop()
-				except IndexError:
-					pass # invalid QC, but whatever
-				continue
-
-			# up axis
-			if line[0] == "$upaxis":
-				qc.upAxis = bpy.context.scene.vs.up_axis = line[1].upper()
-				qc.upAxisMat = getUpAxisMat(line[1])
-				continue
-		
-			# bones in pure animation QCs
-			if line[0] == "$definebone":
-				pass # TODO
-
-			def import_file(word_index,default_ext,smd_type,append='APPEND',layer=0,in_file_recursion = False):
-				path = os.path.join( qc.cd(), appendExt(normalisePath(line[word_index]),default_ext) )
-				
-				if not in_file_recursion and not os.path.exists(path):
-					return import_file(word_index,"dmx",smd_type,append,layer,True)
-
-				if not path in qc.imported_smds: # FIXME: an SMD loaded once relatively and once absolutely will still pass this test
-					qc.imported_smds.append(path)
-					self.append = append if qc.a else 'NEW_ARMATURE'
-
-					# import the file
-					self.num_files_imported += (self.readDMX if path.endswith("dmx") else self.readSMD)(path,qc.upAxis,rotMode,False,smd_type,target_layer=layer)
-				return True
-
-			# meshes
-			if line[0] in ["$body","$model"]:
-				import_file(2,"smd",REF)
-				continue
-			if line[0] == "$lod":
-				in_lod = True
-				lod += 1
-				continue
-			if in_lod:
-				if line[0] == "replacemodel":
-					import_file(2,"smd",REF,'VALIDATE',layer=lod)
+		with open(filepath, 'r') as file:
+			in_bodygroup = in_lod = in_sequence = False
+			lod = 0
+			for line_str in file:
+				line = self.parseQuoteBlockedLine(line_str)
+				if len(line) == 0:
 					continue
-				if "}" in line:
-					in_lod = False
-					continue
-			if line[0] == "$bodygroup":
-				in_bodygroup = True
-				continue
-			if in_bodygroup:
-				if line[0] == "studio":
-					import_file(1,"smd",REF)
-					continue
-				if "}" in line:
-					in_bodygroup = False
+				#print(line)
+
+				# handle individual words (insert QC variable values, change slashes)
+				i = 0
+				for word in line:
+					for var in qc.vars.keys():
+						kw = "${}$".format(var)
+						pos = word.lower().find(kw)
+						if pos != -1:
+							word = word.replace(word[pos:pos+len(kw)], qc.vars[var])			
+					line[i] = word.replace("/","\\") # studiomdl is Windows-only
+					i += 1
+
+				# Skip macros
+				if line[0] == "$definemacro":
+					self.warning(get_id("importer_qc_macroskip", True).format(filename))
+					while line[-1] == "\\\\":
+						line = self.parseQuoteBlockedLine( file.readline())
+
+				# register new QC variable
+				if line[0] == "$definevariable":
+					qc.vars[line[1]] = line[2].lower()
 					continue
 
-			# skeletal animations
-			if in_sequence or (doAnim and line[0] in ["$sequence","$animation"]):
-				# there is no easy way to determine whether a SMD is being defined here or elsewhere, or even precisely where it is being defined
-				num_words_to_skip = 2 if not in_sequence else 0
-				for i in range(len(line)):
-					if num_words_to_skip:
-						num_words_to_skip -= 1
+				# dir changes
+				if line[0] == "$pushd":
+					if line[1][-1] != "\\":
+						line[1] += "\\"
+					qc.dir_stack.append(line[1])
+					continue
+				if line[0] == "$popd":
+					try:
+						qc.dir_stack.pop()
+					except IndexError:
+						pass # invalid QC, but whatever
+					continue
+
+				# up axis
+				if line[0] == "$upaxis":
+					qc.upAxis = bpy.context.scene.vs.up_axis = line[1].upper()
+					qc.upAxisMat = getUpAxisMat(line[1])
+					continue
+
+				# bones in pure animation QCs
+				if line[0] == "$definebone":
+					pass # TODO
+
+				def import_file(word_index,default_ext,smd_type,append='APPEND',layer=0,in_file_recursion = False):
+					path = os.path.join( qc.cd(), appendExt(normalisePath(line[word_index]),default_ext) )
+
+					if not in_file_recursion and not os.path.exists(path):
+						return import_file(word_index,"dmx",smd_type,append,layer,True)
+
+					if path not in qc.imported_smds: # FIXME: an SMD loaded once relatively and once absolutely will still pass this test
+						qc.imported_smds.append(path)
+						self.append = append if qc.a else 'NEW_ARMATURE'
+
+						# import the file
+						self.num_files_imported += (self.readDMX if path.endswith("dmx") else self.readSMD)(path,qc.upAxis,rotMode,False,smd_type,target_layer=layer)
+					return True
+
+				# meshes
+				if line[0] in ["$body","$model"]:
+					import_file(2,"smd",REF)
+					continue
+				if line[0] == "$lod":
+					in_lod = True
+					lod += 1
+					continue
+				if in_lod:
+					if line[0] == "replacemodel":
+						import_file(2,"smd",REF,'VALIDATE',layer=lod)
 						continue
-					if line[i] == "{":
-						in_sequence = True
+					if "}" in line:
+						in_lod = False
 						continue
-					if line[i] == "}":
-						in_sequence = False
+				if line[0] == "$bodygroup":
+					in_bodygroup = True
+					continue
+				if in_bodygroup:
+					if line[0] == "studio":
+						import_file(1,"smd",REF)
 						continue
-					if line[i] in ["hidden","autolay","realtime","snap","spline","xfade","delta","predelta"]:
-						continue
-					if line[i] in ["fadein","fadeout","addlayer","blendwidth","node"]:
-						num_words_to_skip = 1
-						continue
-					if line[i] in ["activity","transision","rtransition"]:
-						num_words_to_skip = 2
-						continue
-					if line[i] in ["blend"]:
-						num_words_to_skip = 3
-						continue
-					if line[i] in ["blendlayer"]:
-						num_words_to_skip = 5
-						continue
-					# there are many more keywords, but they can only appear *after* an SMD is referenced
-				
-					if not qc.a: qc.a = self.findArmature()
-					if not qc.a:
-						self.warning(get_id("qc_warn_noarmature", True).format(line_str.strip()))
+					if "}" in line:
+						in_bodygroup = False
 						continue
 
-					if line[i].lower() not in qc.animation_names:
-						if not qc.a.animation_data: qc.a.animation_data_create()
-						last_action = qc.a.animation_data.action
-						import_file(i,"smd",ANIM,'VALIDATE')
-						if line[0] == "$animation":
-							qc.animation_names.append(line[1].lower())
-						while i < len(line) - 1:
-							if line[i] == "fps" and qc.a.animation_data.action != last_action:
-								if 'fps' in dir(qc.a.animation_data.action):
-									qc.a.animation_data.action.fps = float(line[i+1])
-							i += 1
-					break
-				continue
+				# skeletal animations
+				if in_sequence or (doAnim and line[0] in ["$sequence","$animation"]):
+					# there is no easy way to determine whether a SMD is being defined here or elsewhere, or even precisely where it is being defined
+					num_words_to_skip = 2 if not in_sequence else 0
+					for i in range(len(line)):
+						if num_words_to_skip:
+							num_words_to_skip -= 1
+							continue
+						if line[i] == "{":
+							in_sequence = True
+							continue
+						if line[i] == "}":
+							in_sequence = False
+							continue
+						if line[i] in ["hidden","autolay","realtime","snap","spline","xfade","delta","predelta"]:
+							continue
+						if line[i] in ["fadein","fadeout","addlayer","blendwidth","node"]:
+							num_words_to_skip = 1
+							continue
+						if line[i] in ["activity","transision","rtransition"]:
+							num_words_to_skip = 2
+							continue
+						if line[i] in ["blend"]:
+							num_words_to_skip = 3
+							continue
+						if line[i] in ["blendlayer"]:
+							num_words_to_skip = 5
+							continue
+						# there are many more keywords, but they can only appear *after* an SMD is referenced
 
-			# flex animation
-			if line[0] == "flexfile":
-				import_file(1,"vta",FLEX,'VALIDATE')
-				continue
+						if not qc.a: qc.a = self.findArmature()
+						if not qc.a:
+							self.warning(get_id("qc_warn_noarmature", True).format(line_str.strip()))
+							continue
 
-			# naming shapes
-			if qc.ref_mesh and line[0] in ["flex","flexpair"]: # "flex" is safe because it cannot come before "flexfile"
-				for i in range(1,len(line)):
-					if line[i] == "frame":
-						shape = qc.ref_mesh.data.shape_keys.key_blocks.get(line[i+1])
-						if shape and shape.name.startswith("Key"): shape.name = line[1]
+						if line[i].lower() not in qc.animation_names:
+							if not qc.a.animation_data: qc.a.animation_data_create()
+							last_action = qc.a.animation_data.action
+							import_file(i,"smd",ANIM,'VALIDATE')
+							if line[0] == "$animation":
+								qc.animation_names.append(line[1].lower())
+							while i < len(line) - 1:
+								if line[i] == "fps" and qc.a.animation_data.action != last_action:
+									if 'fps' in dir(qc.a.animation_data.action):
+										qc.a.animation_data.action.fps = float(line[i+1])
+								i += 1
 						break
-				continue
+					continue
 
-			# physics mesh
-			if line[0] in ["$collisionmodel","$collisionjoints"]:
-				import_file(1,"smd",PHYS,'VALIDATE',layer=10) # FIXME: what if there are >10 LODs?
-				continue
+				# flex animation
+				if line[0] == "flexfile":
+					import_file(1,"vta",FLEX,'VALIDATE')
+					continue
 
-			# origin; this is where viewmodel editors should put their camera, and is in general something to be aware of
-			if line[0] == "$origin":
-				if qc.makeCamera:
-					data = bpy.data.cameras.new(qc.jobName + "_origin")
-					name = "camera"
-				else:
-					data = None
-					name = "empty object"
-				print("QC IMPORTER: created {} at $origin\n".format(name))
+				# naming shapes
+				if qc.ref_mesh and line[0] in ["flex","flexpair"]: # "flex" is safe because it cannot come before "flexfile"
+					for i in range(1,len(line)):
+						if line[i] == "frame":
+							shape = qc.ref_mesh.data.shape_keys.key_blocks.get(line[i+1])
+							if shape and shape.name.startswith("Key"): shape.name = line[1]
+							break
+					continue
 
-				origin = bpy.data.objects.new(qc.jobName + "_origin",data)
-				bpy.context.scene.collection.objects.link(origin)
+				# physics mesh
+				if line[0] in ["$collisionmodel","$collisionjoints"]:
+					import_file(1,"smd",PHYS,'VALIDATE',layer=10) # FIXME: what if there are >10 LODs?
+					continue
 
-				origin.rotation_euler = Vector([pi/2,0,pi]) + Vector(getUpAxisMat(qc.upAxis).inverted().to_euler()) # works, but adding seems very wrong!
-				ops.object.select_all(action="DESELECT")
-				origin.select_set(True)
-				ops.object.transform_apply(rotation=True)
+						# origin; this is where viewmodel editors should put their camera, and is in general something to be aware of
+				if line[0] == "$origin":
+					if qc.makeCamera:
+						data = bpy.data.cameras.new(f"{qc.jobName}_origin")
+						name = "camera"
+					else:
+						data = None
+						name = "empty object"
+					print("QC IMPORTER: created {} at $origin\n".format(name))
 
-				for i in range(3):
-					origin.location[i] = float(line[i+1])
-				origin.matrix_world = getUpAxisMat(qc.upAxis) @ origin.matrix_world
+					origin = bpy.data.objects.new(f"{qc.jobName}_origin", data)
+					bpy.context.scene.collection.objects.link(origin)
 
-				if qc.makeCamera:
-					bpy.context.scene.camera = origin
-					origin.data.lens_unit = 'DEGREES'
-					origin.data.lens = 31.401752 # value always in mm; this number == 54 degrees
-					# Blender's FOV isn't locked to X or Y height, so a shift is needed to get the weapon aligned properly.
-					# This is a nasty hack, and the values are only valid for the default 54 degrees angle
-					origin.data.shift_y = -0.27
-					origin.data.shift_x = 0.36
-					origin.data.passepartout_alpha = 1
-				else:
-					origin.empty_display_type = 'PLAIN_AXES'
+					origin.rotation_euler = Vector([pi/2,0,pi]) + Vector(getUpAxisMat(qc.upAxis).inverted().to_euler()) # works, but adding seems very wrong!
+					ops.object.select_all(action="DESELECT")
+					origin.select_set(True)
+					ops.object.transform_apply(rotation=True)
 
-				qc.origin = origin
+					for i in range(3):
+						origin.location[i] = float(line[i+1])
+					origin.matrix_world = getUpAxisMat(qc.upAxis) @ origin.matrix_world
 
-			# QC inclusion
-			if line[0] == "$include":
-				path = os.path.join(qc.root_filedir,normalisePath(line[1])) # special case: ignores dir stack
+					if qc.makeCamera:
+						bpy.context.scene.camera = origin
+						origin.data.lens_unit = 'DEGREES'
+						origin.data.lens = 31.401752 # value always in mm; this number == 54 degrees
+						# Blender's FOV isn't locked to X or Y height, so a shift is needed to get the weapon aligned properly.
+						# This is a nasty hack, and the values are only valid for the default 54 degrees angle
+						origin.data.shift_y = -0.27
+						origin.data.shift_x = 0.36
+						origin.data.passepartout_alpha = 1
+					else:
+						origin.empty_display_type = 'PLAIN_AXES'
 
-				if not path.endswith(".qc") and not path.endswith(".qci"):
-					if os.path.exists(appendExt(path,".qci")):
-						path = appendExt(path,".qci")
-					elif os.path.exists(appendExt(path,".qc")):
-						path = appendExt(path,".qc")
-				try:
-					self.readQC(path,False, doAnim, makeCamera, rotMode)
-				except IOError:
-					self.warning(get_id("importer_err_qci", True).format(path))
+					qc.origin = origin
 
-		file.close()
+				# QC inclusion
+				if line[0] == "$include":
+					path = os.path.join(qc.root_filedir,normalisePath(line[1])) # special case: ignores dir stack
+
+					if not path.endswith(".qc") and not path.endswith(".qci"):
+						if os.path.exists(appendExt(path,".qci")):
+							path = appendExt(path,".qci")
+						elif os.path.exists(appendExt(path,".qc")):
+							path = appendExt(path,".qc")
+					try:
+						self.readQC(path,False, doAnim, makeCamera, rotMode)
+					except IOError:
+						self.warning(get_id("importer_err_qci", True).format(path))
 
 		if qc.origin:
 			qc.origin.parent = qc.a
@@ -1223,15 +1218,15 @@ class SmdImporter(bpy.types.Operator, Logger):
 			bpy.context.scene.name = smd.jobName
 
 		print("\nSMD IMPORTER: now working on",smd.jobName)
-		
+
 		while True:
 			header = self.parseQuoteBlockedLine(file.readline())
 			if header: break
-		
+
 		if header != ["version" ,"1"]:
 			self.warning (get_id("importer_err_smd_ver"))
 
-		if smd.jobType == None:
+		if smd.jobType is None:
 			self.scanSMD() # What are we dealing with?
 			self.createCollection()
 
